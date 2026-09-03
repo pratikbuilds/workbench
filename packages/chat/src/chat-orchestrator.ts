@@ -507,11 +507,24 @@ async function resolveReplyThreadId(
 
   const originMessageId = requestMessageIds[requestMessageIds.length - 1];
   if (originMessageId === undefined) return undefined;
-  return deps.threads.threadIdForMessage(
+
+  // Membership is the authoritative assignment; the room-message row's
+  // own `threadId` is the fallback because `routes.ts` stamps it onto
+  // the insert before `assignMessage` runs, while fan-out (and a very
+  // fast reply) can race that second write.
+  const fromMembership = await deps.threads.threadIdForMessage(
     tenantId,
     workbenchId,
     originMessageId,
   );
+  if (fromMembership !== undefined) return fromMembership;
+
+  const origin = await deps.roomMessages.getMessage({
+    tenantId,
+    workbenchId,
+    messageId: originMessageId,
+  });
+  return origin?.threadId ?? undefined;
 }
 
 /**
