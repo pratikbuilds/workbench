@@ -163,14 +163,21 @@ export type ChatOrchestratorDeps = {
    */
   listConnectedProviders?: ConnectedProviderLister;
   /**
-   * Threads a delegated specialist's reply under the message that
-   * delegated to it (CL-5879) — the same `openReplyThread`/`assignMessage`
-   * pair `routes.ts`'s human-send path already uses. Absent when no
-   * thread store is mounted, matching `memory`'s own optional shape: a
-   * deploy that never wires threads keeps every reply on the root feed
-   * exactly as before this landed.
+   * Where an agent's reply lands in the room's thread tree — the same
+   * `openReplyThread`/`assignMessage`/`threadIdForMessage` surface
+   * `routes.ts`'s human-send path already uses. Two cases, one write:
+   * a specialist's first reply after being @mentioned threads under
+   * the delegating message (CL-5879); every other reply lands in the
+   * same thread as the request message that opened the turn, so a
+   * question asked inside a fork gets its answer in that fork rather
+   * than back on the root feed. Absent when no thread store is
+   * mounted, matching `memory`'s own optional shape: a deploy that
+   * never wires threads keeps every reply on the root feed.
    */
-  threads?: Pick<ThreadStore, "openReplyThread" | "assignMessage">;
+  threads?: Pick<
+    ThreadStore,
+    "openReplyThread" | "assignMessage" | "threadIdForMessage"
+  >;
 };
 
 export type ChatOrchestrator = {
@@ -447,7 +454,7 @@ async function resolveMemberWorkbenches(
  * that (a very late, already-abandoned occurrence), it just posts
  * unthreaded into the main feed instead of nested under the delegating
  * message — a cosmetic degrade, never a lost message. The common case
- * (event-driven delete) is unchanged: `threadDelegatedReply` below
+ * (event-driven delete) is unchanged: `resolveReplyThreadId` below
  * still deletes the entry the moment the specialist's first reply
  * consumes it, long before the TTL would ever fire.
  */
@@ -457,30 +464,54 @@ type PendingDelegationThread = {
   readonly messageId: string;
 };
 
-async function threadDelegatedReply(
+/**
+ * Where this reply belongs in the workbench's thread tree.
+ *
+ * Precedence:
+ * 1. A pending CL-5879 delegation for this specialist — open (or
+ *    reuse) the reply thread under the delegating message, consume
+ *    the pending entry, and return that thread id.
+ * 2. The thread the turn's most recent request message already lives
+ *    in — so a question asked inside a fork gets its answer in that
+ *    same fork.
+ * 3. Undefined — the reply stays on the root feed (no membership row),
+ *    matching a deploy with no thread store or a request that was
+ *    never assigned.
+ *
+ * Decided once, before the post, so the room-message row, the SSE
+ * payload, and the membership assignment all carry the same thread —
+ * never assign-then-reassign (drizzle's `assignMessage` is
+ * `onConflictDoNothing`, so a second write would silently stick).
+ */
+async function resolveReplyThreadId(
   deps: ChatOrchestratorDeps,
   pendingDelegationThreads: ExpiringMap<string, PendingDelegationThread>,
   agentAddress: string,
+  tenantId: string,
   workbenchId: string,
-  messageId: string,
-): Promise<void> {
-  if (deps.threads === undefined) return;
+  requestMessageIds: readonly string[],
+): Promise<string | undefined> {
+  if (deps.threads === undefined) return undefined;
+
   const runId = localPartOf(agentAddress);
   const pending = pendingDelegationThreads.get(runId);
-  if (pending === undefined || pending.workbenchId !== workbenchId) return;
-  pendingDelegationThreads.delete(runId);
+  if (pending !== undefined && pending.workbenchId === workbenchId) {
+    pendingDelegationThreads.delete(runId);
+    const reply = await deps.threads.openReplyThread({
+      tenantId: pending.tenantId,
+      workbenchId: pending.workbenchId,
+      parentMessageId: pending.messageId,
+    });
+    return reply.id;
+  }
 
-  const reply = await deps.threads.openReplyThread({
-    tenantId: pending.tenantId,
-    workbenchId: pending.workbenchId,
-    parentMessageId: pending.messageId,
-  });
-  await deps.threads.assignMessage({
-    tenantId: pending.tenantId,
-    workbenchId: pending.workbenchId,
-    threadId: reply.id,
-    messageId,
-  });
+  const originMessageId = requestMessageIds[requestMessageIds.length - 1];
+  if (originMessageId === undefined) return undefined;
+  return deps.threads.threadIdForMessage(
+    tenantId,
+    workbenchId,
+    originMessageId,
+  );
 }
 
 /**
@@ -648,13 +679,30 @@ async function postReply(
       workbenchId,
       agentAddress: resolved.roomAddress,
     });
+    const replyThreadId = await resolveReplyThreadId(
+      deps,
+      pendingDelegationThreads,
+      resolved.roomAddress,
+      resolved.tenantId,
+      workbenchId,
+      turn?.requestMessageIds ?? [],
+    );
     const posted = await postRoomMessage(deps, {
       tenantId: resolved.tenantId,
       workbenchId,
       sender: { name: null, address: resolved.roomAddress },
       parts: [...parts],
       ...(turn !== undefined ? { runId: turn.childRunId } : {}),
+      ...(replyThreadId !== undefined ? { threadId: replyThreadId } : {}),
     });
+    if (replyThreadId !== undefined && deps.threads !== undefined) {
+      await deps.threads.assignMessage({
+        tenantId: resolved.tenantId,
+        workbenchId,
+        threadId: replyThreadId,
+        messageId: posted.id,
+      });
+    }
     if (turn !== undefined) {
       await deps.agentTurns?.finishTurn({
         tenantId: resolved.tenantId,
@@ -664,14 +712,6 @@ async function postReply(
         ...(outcome.status === "failed" ? { error: outcome.error } : {}),
       });
     }
-
-    await threadDelegatedReply(
-      deps,
-      pendingDelegationThreads,
-      resolved.roomAddress,
-      workbenchId,
-      posted.id,
-    );
 
     // The delegation hop: when the host's reply @mentions other agent
     // teammates, they must receive it exactly as they would a human's

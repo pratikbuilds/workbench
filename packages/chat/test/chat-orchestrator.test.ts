@@ -278,6 +278,76 @@ describe("createChatOrchestrator", () => {
     orchestrator.dispose();
   });
 
+  test("an agent's reply to a message in a reply thread lands in that same thread", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      requestMessageIds: ["msg_in_fork"],
+    });
+    const assignments: {
+      tenantId: string;
+      workbenchId: string;
+      threadId: string;
+      messageId: string;
+    }[] = [];
+    const threadByMessage = new Map<string, string>([
+      ["msg_in_fork", "thr_fork"],
+    ]);
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads: {
+        openReplyThread: async () => {
+          throw new Error("ordinary fork replies must not open a new thread");
+        },
+        assignMessage: async (input) => {
+          assignments.push(input);
+        },
+        threadIdForMessage: async (_tenantId, _workbenchId, messageId) =>
+          threadByMessage.get(messageId),
+      },
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: { type: "connector.reply", data: { content: "56" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]).toMatchObject({
+      workbenchId: "ins_workbench1",
+      threadId: "thr_fork",
+      parts: [{ kind: "text", text: "56" }],
+    });
+    expect(assignments).toEqual([
+      {
+        tenantId: "ten_1",
+        workbenchId: "ins_workbench1",
+        threadId: "thr_fork",
+        messageId: room.posted[0]?.id,
+      },
+    ]);
+
+    orchestrator.dispose();
+  });
+
   test("a reply for room B does not land in room A when the same agent is in both", async () => {
     const room = fakeRoom();
     const agentTurns = createInMemoryAgentTurnStore();
@@ -965,6 +1035,7 @@ describe("createChatOrchestrator", () => {
         assignMessage: async (input) => {
           assignments.push(input);
         },
+        threadIdForMessage: async () => undefined,
       },
       events,
       claims: fakeClaims(),
@@ -1103,6 +1174,7 @@ describe("createChatOrchestrator", () => {
             };
           },
           assignMessage: async () => {},
+          threadIdForMessage: async () => undefined,
         },
         events,
         claims: fakeClaims(),
