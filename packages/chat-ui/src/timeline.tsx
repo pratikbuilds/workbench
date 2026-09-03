@@ -1944,7 +1944,7 @@ function ThreadAffordance({
   const initials = addresses.slice(0, 3).map((address) => {
     const handle =
       participants.find((p) => p.address === address)?.handle ??
-      address.slice(0, 1);
+      localPartOf(address);
     return initialsOf(handle);
   });
   const activity = formatRelativeActivity(meta?.lastActivityAt ?? null);

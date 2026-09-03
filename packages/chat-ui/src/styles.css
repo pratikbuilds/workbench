@@ -1124,6 +1124,21 @@
   margin-left: auto;
 }
 
+/* Align the reply-thread affordance to the right edge for own messages,
+   matching the message bubble. The default row is full-width (so the Open
+   button can sit at the far end via margin-left:auto); for own rows we
+   shrink it to its content and push it rightward instead. The Open/Fork
+   button's auto-margin is reset since the row is no longer stretched. */
+.chat-message-group[data-own="true"] .chat-thread-affordance {
+  margin-left: auto;
+  margin-right: 2.9rem;
+  max-width: fit-content;
+}
+
+.chat-message-group[data-own="true"] .chat-thread-open {
+  margin-left: 0;
+}
+
 /* Optimistic sends (CL-5879): a message the reader just sent renders
    exactly like a normal message immediately — full opacity, no restyling —
    with only the small clock glyph next to its header while in flight, and
