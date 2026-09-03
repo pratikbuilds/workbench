@@ -27,8 +27,8 @@ done
 # connects.
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';" >/dev/null
 hba=/etc/postgresql/17/main/pg_hba.conf
-grep -q '127.0.0.1/32 md5' "$hba" || echo 'host all all 127.0.0.1/32 md5' | sudo tee -a "$hba" >/dev/null
-grep -q '::1/128 md5' "$hba" || echo 'host all all ::1/128 md5' | sudo tee -a "$hba" >/dev/null
+sudo grep -q '127.0.0.1/32 md5' "$hba" || echo 'host all all 127.0.0.1/32 md5' | sudo tee -a "$hba" >/dev/null
+sudo grep -q '::1/128 md5' "$hba" || echo 'host all all ::1/128 md5' | sudo tee -a "$hba" >/dev/null
 sudo pg_ctlcluster 17 main reload || true
 
 # Seed .env from the tracked template on first boot, pointing DATABASE_URL at
