@@ -331,7 +331,11 @@ describe("createChatOrchestrator", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(room.posted).toHaveLength(1);
-    expect(room.posted[0]).toMatchObject({
+    const reply = room.posted[0];
+    if (reply === undefined) {
+      throw new Error("expected the agent reply to be posted");
+    }
+    expect(reply).toMatchObject({
       workbenchId: "ins_workbench1",
       threadId: "thr_fork",
       parts: [{ kind: "text", text: "56" }],
@@ -341,7 +345,7 @@ describe("createChatOrchestrator", () => {
         tenantId: "ten_1",
         workbenchId: "ins_workbench1",
         threadId: "thr_fork",
-        messageId: room.posted[0]?.id,
+        messageId: reply.id,
       },
     ]);
 
