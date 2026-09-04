@@ -61,7 +61,7 @@ import type { ChatPlatform } from "./platform-port";
 import { postRoomMessage, type RoomMessageStore } from "./room-messages";
 import { AGENT_TURN_STALE_MS, type AgentTurnStore } from "./agent-turns";
 import type { ChatStore } from "./store";
-import type { ThreadStore } from "./threads";
+import { ThreadDepthCapError, type ThreadStore } from "./threads";
 import type { WorkbenchSubscriberRegistry } from "./workbench-events";
 import type { WriteClaimStore } from "./write-claims";
 
@@ -434,11 +434,15 @@ async function resolveMemberWorkbenches(
  * the host's (see the module's own postReply doc below) but arrives
  * once per member workbench rather than once per specialist.
  *
- * Only the specialist's first reply after being delegated to is
- * threaded — the entry is deleted on read, matching this package's
- * "thread machinery that already exists" scope for CL-5879 rather than
- * tracking an open-ended delegation session. A specialist mentioned
- * again gets a fresh entry from that later delegating message.
+ * Only the specialist's first *successful nested* reply after being
+ * delegated to is threaded — the entry is peeked here and deleted only
+ * after `postRoomMessage` succeeds with a resolved nest (or a
+ * depth-cap inherit), matching this package's "thread machinery that
+ * already exists" scope for CL-5879 rather than tracking an open-ended
+ * delegation session. A specialist mentioned again gets a fresh entry
+ * from that later delegating message. An `openReplyThread` outage that
+ * still lets the reply post unthreaded leaves the pending entry in
+ * place so a later retry can nest.
  *
  * Bounded with a TTL (CL-7229) rather than a plain `Map`: a specialist
  * that never replies (crashed, never woke, or was mentioned by mistake)
@@ -454,9 +458,8 @@ async function resolveMemberWorkbenches(
  * that (a very late, already-abandoned occurrence), it just posts
  * unthreaded into the main feed instead of nested under the delegating
  * message — a cosmetic degrade, never a lost message. The common case
- * (event-driven delete) is unchanged: `resolveReplyThreadId` below
- * still deletes the entry the moment the specialist's first reply
- * consumes it, long before the TTL would ever fire.
+ * (event-driven delete after a successful nested post) still clears
+ * the entry long before the TTL would ever fire.
  */
 type PendingDelegationThread = {
   readonly tenantId: string;
@@ -465,18 +468,66 @@ type PendingDelegationThread = {
 };
 
 /**
+ * Where this reply belongs, plus whether a successful post should
+ * consume the pending CL-5879 delegation entry for `runId`.
+ *
+ * `threadId` may be undefined (root feed) even when `consumePendingRunId`
+ * is set — depth-cap inherit can fail to find a parent thread, and the
+ * pending entry still must clear after the reply lands so nesting is
+ * not retried forever.
+ */
+type ResolvedReplyThread = {
+  readonly threadId: string | undefined;
+  readonly consumePendingRunId: string | undefined;
+};
+
+/**
+ * Membership first, then the room-message row's own `threadId` —
+ * `routes.ts` stamps the row before `assignMessage` runs, and fan-out
+ * (or a very fast reply) can race that second write.
+ */
+async function threadIdForOriginMessage(
+  deps: ChatOrchestratorDeps,
+  tenantId: string,
+  workbenchId: string,
+  messageId: string,
+): Promise<string | undefined> {
+  if (deps.threads === undefined) return undefined;
+  const fromMembership = await deps.threads.threadIdForMessage(
+    tenantId,
+    workbenchId,
+    messageId,
+  );
+  if (fromMembership !== undefined) return fromMembership;
+
+  const origin = await deps.roomMessages.getMessage({
+    tenantId,
+    workbenchId,
+    messageId,
+  });
+  return origin?.threadId ?? undefined;
+}
+
+/**
  * Where this reply belongs in the workbench's thread tree.
  *
  * Precedence:
  * 1. A pending CL-5879 delegation for this specialist — open (or
- *    reuse) the reply thread under the delegating message, consume
- *    the pending entry, and return that thread id.
+ *    reuse) the reply thread under the delegating message. A
+ *    `ThreadDepthCapError` inherits the mentioning message's thread
+ *    instead of dropping the reply. Any other open failure degrades to
+ *    the root feed and leaves the pending entry for a later retry.
  * 2. The thread the turn's most recent request message already lives
  *    in — so a question asked inside a fork gets its answer in that
  *    same fork.
  * 3. Undefined — the reply stays on the root feed (no membership row),
  *    matching a deploy with no thread store or a request that was
  *    never assigned.
+ *
+ * Resolution failures never abort delivery: every path either returns a
+ * thread id or degrades to root so `postRoomMessage` still runs.
+ * Pending consume is deferred to after a successful post (see
+ * `postReply`), never done on peek.
  *
  * Decided once, before the post, so the room-message row, the SSE
  * payload, and the membership assignment all carry the same thread —
@@ -490,41 +541,66 @@ async function resolveReplyThreadId(
   tenantId: string,
   workbenchId: string,
   requestMessageIds: readonly string[],
-): Promise<string | undefined> {
-  if (deps.threads === undefined) return undefined;
-
-  const runId = localPartOf(agentAddress);
-  const pending = pendingDelegationThreads.get(runId);
-  if (pending !== undefined && pending.workbenchId === workbenchId) {
-    pendingDelegationThreads.delete(runId);
-    const reply = await deps.threads.openReplyThread({
-      tenantId: pending.tenantId,
-      workbenchId: pending.workbenchId,
-      parentMessageId: pending.messageId,
-    });
-    return reply.id;
+): Promise<ResolvedReplyThread> {
+  if (deps.threads === undefined) {
+    return { threadId: undefined, consumePendingRunId: undefined };
   }
 
-  const originMessageId = requestMessageIds[requestMessageIds.length - 1];
-  if (originMessageId === undefined) return undefined;
+  try {
+    const runId = localPartOf(agentAddress);
+    const pending = pendingDelegationThreads.get(runId);
+    if (pending !== undefined && pending.workbenchId === workbenchId) {
+      try {
+        const reply = await deps.threads.openReplyThread({
+          tenantId: pending.tenantId,
+          workbenchId: pending.workbenchId,
+          parentMessageId: pending.messageId,
+        });
+        return { threadId: reply.id, consumePendingRunId: runId };
+      } catch (cause) {
+        if (cause instanceof ThreadDepthCapError) {
+          const inherited = await threadIdForOriginMessage(
+            deps,
+            pending.tenantId,
+            pending.workbenchId,
+            pending.messageId,
+          );
+          return { threadId: inherited, consumePendingRunId: runId };
+        }
+        reportError(cause, {
+          operation: "chat.resolveReplyThreadId.openReplyThread",
+          tenantId,
+          roomId: workbenchId,
+          agentId: agentAddress,
+          extra: { parentMessageId: pending.messageId },
+        });
+        // Leave pending in place so a later reply can still nest once
+        // the thread store recovers; still deliver this reply on root.
+        return { threadId: undefined, consumePendingRunId: undefined };
+      }
+    }
 
-  // Membership is the authoritative assignment; the room-message row's
-  // own `threadId` is the fallback because `routes.ts` stamps it onto
-  // the insert before `assignMessage` runs, while fan-out (and a very
-  // fast reply) can race that second write.
-  const fromMembership = await deps.threads.threadIdForMessage(
-    tenantId,
-    workbenchId,
-    originMessageId,
-  );
-  if (fromMembership !== undefined) return fromMembership;
+    const originMessageId = requestMessageIds[requestMessageIds.length - 1];
+    if (originMessageId === undefined) {
+      return { threadId: undefined, consumePendingRunId: undefined };
+    }
 
-  const origin = await deps.roomMessages.getMessage({
-    tenantId,
-    workbenchId,
-    messageId: originMessageId,
-  });
-  return origin?.threadId ?? undefined;
+    const threadId = await threadIdForOriginMessage(
+      deps,
+      tenantId,
+      workbenchId,
+      originMessageId,
+    );
+    return { threadId, consumePendingRunId: undefined };
+  } catch (cause) {
+    reportError(cause, {
+      operation: "chat.resolveReplyThreadId",
+      tenantId,
+      roomId: workbenchId,
+      agentId: agentAddress,
+    });
+    return { threadId: undefined, consumePendingRunId: undefined };
+  }
 }
 
 /**
@@ -692,14 +768,30 @@ async function postReply(
       workbenchId,
       agentAddress: resolved.roomAddress,
     });
-    const replyThreadId = await resolveReplyThreadId(
+    // A late reply after the turn already failed still has the request
+    // message ids on that failed row — use them so the answer lands in
+    // the same fork the question asked from.
+    let requestMessageIds = turn?.requestMessageIds ?? [];
+    if (turn === undefined) {
+      const latest = await latestTurnForAgent(
+        deps.agentTurns,
+        resolved.tenantId,
+        workbenchId,
+        resolved.roomAddress,
+      );
+      if (latest?.status === "failed") {
+        requestMessageIds = latest.requestMessageIds;
+      }
+    }
+    const resolvedThread = await resolveReplyThreadId(
       deps,
       pendingDelegationThreads,
       resolved.roomAddress,
       resolved.tenantId,
       workbenchId,
-      turn?.requestMessageIds ?? [],
+      requestMessageIds,
     );
+    const replyThreadId = resolvedThread.threadId;
     const posted = await postRoomMessage(deps, {
       tenantId: resolved.tenantId,
       workbenchId,
@@ -708,14 +800,6 @@ async function postReply(
       ...(turn !== undefined ? { runId: turn.childRunId } : {}),
       ...(replyThreadId !== undefined ? { threadId: replyThreadId } : {}),
     });
-    if (replyThreadId !== undefined && deps.threads !== undefined) {
-      await deps.threads.assignMessage({
-        tenantId: resolved.tenantId,
-        workbenchId,
-        threadId: replyThreadId,
-        messageId: posted.id,
-      });
-    }
     if (turn !== undefined) {
       await deps.agentTurns?.finishTurn({
         tenantId: resolved.tenantId,
@@ -752,6 +836,33 @@ async function postReply(
         workbenchId,
         messageId: posted.id,
       });
+    }
+
+    // Consume pending nesting only after the reply actually landed —
+    // an openReplyThread/post failure must not burn the entry.
+    if (resolvedThread.consumePendingRunId !== undefined) {
+      pendingDelegationThreads.delete(resolvedThread.consumePendingRunId);
+    }
+
+    // Membership is best-effort after finish + fan-out: a failed
+    // assign must not leave the turn `running` or skip mention mail.
+    if (replyThreadId !== undefined && deps.threads !== undefined) {
+      try {
+        await deps.threads.assignMessage({
+          tenantId: resolved.tenantId,
+          workbenchId,
+          threadId: replyThreadId,
+          messageId: posted.id,
+        });
+      } catch (cause) {
+        reportError(cause, {
+          operation: "chat.postReply.assignMessage",
+          tenantId: resolved.tenantId,
+          roomId: workbenchId,
+          agentId: resolved.roomAddress,
+          extra: { messageId: posted.id, threadId: replyThreadId },
+        });
+      }
     }
   }
 }
