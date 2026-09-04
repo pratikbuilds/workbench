@@ -1419,6 +1419,11 @@ export async function createHub(config: HubConfig) {
     recordActivity: chatPlatform.recordActivity,
     claims: writeClaims,
     connectorRegistry: CONNECTOR_REGISTRY,
+    // Same store `createChatRoutes` uses: without this, every agent reply
+    // stays on the root feed (no fork-thread routing, no CL-5879
+    // delegation nesting) because `postReply` short-circuits when
+    // `threads` is absent.
+    threads: threadStore,
   };
   if (memoryHandle !== undefined) {
     chatOrchestratorDeps.memory = memoryHandle.memory;

@@ -36,6 +36,7 @@ import {
   type RoomMessageStore,
 } from "../src/room-messages";
 import type { WorkbenchSettingsRow } from "../src/store";
+import { ThreadDepthCapError } from "../src/threads";
 import type { WorkbenchSubscriberRegistry } from "../src/workbench-events";
 import { createInMemoryWriteClaimStore } from "../src/write-claims";
 
@@ -274,6 +275,507 @@ describe("createChatOrchestrator", () => {
     // The message is on every open timeline, not only in the table.
     expect(room.published).toHaveLength(1);
     expect(room.published[0]?.workbenchId).toBe("ins_workbench1");
+
+    orchestrator.dispose();
+  });
+
+  test("an agent's reply to a message in a reply thread lands in that same thread", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      requestMessageIds: ["msg_in_fork"],
+    });
+    const assignments: {
+      tenantId: string;
+      workbenchId: string;
+      threadId: string;
+      messageId: string;
+    }[] = [];
+    const threadByMessage = new Map<string, string>([
+      ["msg_in_fork", "thr_fork"],
+    ]);
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads: {
+        openReplyThread: async () => {
+          throw new Error("ordinary fork replies must not open a new thread");
+        },
+        assignMessage: async (input) => {
+          assignments.push(input);
+        },
+        threadIdForMessage: async (_tenantId, _workbenchId, messageId) =>
+          threadByMessage.get(messageId),
+      },
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: { type: "connector.reply", data: { content: "56" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    const reply = room.posted[0];
+    if (reply === undefined) {
+      throw new Error("expected the agent reply to be posted");
+    }
+    expect(reply).toMatchObject({
+      workbenchId: "ins_workbench1",
+      threadId: "thr_fork",
+      parts: [{ kind: "text", text: "56" }],
+    });
+    expect(assignments).toEqual([
+      {
+        tenantId: "ten_1",
+        workbenchId: "ins_workbench1",
+        threadId: "thr_fork",
+        messageId: reply.id,
+      },
+    ]);
+
+    orchestrator.dispose();
+  });
+
+  test("falls back to the request message's own threadId when membership is not yet assigned", async () => {
+    const room = fakeRoom();
+    const origin = await room.roomMessages.insertMessage({
+      id: "msg_in_fork_row",
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: null, address: "prn_alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "in the fork" }],
+      threadId: "thr_fork_row",
+    });
+    const agentTurns = createInMemoryAgentTurnStore();
+    await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      requestMessageIds: [origin.id],
+    });
+    const assignments: {
+      tenantId: string;
+      workbenchId: string;
+      threadId: string;
+      messageId: string;
+    }[] = [];
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads: {
+        openReplyThread: async () => {
+          throw new Error("must not open a new thread for an ordinary reply");
+        },
+        assignMessage: async (input) => {
+          assignments.push(input);
+        },
+        // Membership miss — the race `routes.ts` can lose against fan-out.
+        threadIdForMessage: async () => undefined,
+      },
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: { type: "connector.reply", data: { content: "got it" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reply = room.posted.find(
+      (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
+    );
+    if (reply === undefined) {
+      throw new Error("expected the agent reply to be posted");
+    }
+    expect(reply.threadId).toBe("thr_fork_row");
+    expect(assignments).toEqual([
+      {
+        tenantId: "ten_1",
+        workbenchId: "ins_workbench1",
+        threadId: "thr_fork_row",
+        messageId: reply.id,
+      },
+    ]);
+
+    orchestrator.dispose();
+  });
+
+  test("a ThreadDepthCapError on delegation inherits the mentioning message's thread instead of dropping the reply", async () => {
+    const room = fakeRoom();
+    const assignments: {
+      tenantId: string;
+      workbenchId: string;
+      threadId: string;
+      messageId: string;
+    }[] = [];
+    const events = createSidecarEmitter();
+    const runsByCallOrder = [
+      { id: "ins_myra1", tenantId: "ten_1" },
+      { id: "ins_echo1", tenantId: "ten_1" },
+    ];
+    let dbCallIndex = 0;
+    let launchCallIndex = 0;
+    const db = {
+      query: {
+        workflowRun: {
+          findFirst: async () => {
+            const run = runsByCallOrder[dbCallIndex];
+            dbCallIndex += 1;
+            return run === undefined
+              ? undefined
+              : { ...run, principalId: null };
+          },
+        },
+      },
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => {
+              const run = runsByCallOrder[launchCallIndex];
+              launchCallIndex += 1;
+              return run === undefined
+                ? []
+                : [launchRowFor(run.id, run.tenantId)];
+            },
+          }),
+        }),
+      }),
+    };
+    const threadByMessage = new Map<string, string>();
+    const orchestrator = createChatOrchestrator({
+      db: db as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", [
+            "ins_myra1@ten1.workbench.test",
+            "ins_echo1@ten1.workbench.test",
+          ]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads: {
+        openReplyThread: async () => {
+          throw new ThreadDepthCapError();
+        },
+        assignMessage: async (input) => {
+          assignments.push(input);
+        },
+        threadIdForMessage: async (_tenantId, _workbenchId, messageId) =>
+          threadByMessage.get(messageId),
+      },
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_myra1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "connector.reply",
+        data: { content: "@ins_echo1 take this from a depth-2 fork" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const delegatingMessage = room.posted[0];
+    if (delegatingMessage === undefined) {
+      throw new Error("expected the host's delegating message to be posted");
+    }
+    // The host answered inside a depth-2 fork — the specialist cannot
+    // open a third-level reply thread under that message.
+    threadByMessage.set(delegatingMessage.id, "thr_depth2");
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_2",
+      event: {
+        type: "connector.reply",
+        data: { content: "landed beside the mention, not lost" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const specialistReply = room.posted.find(
+      (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
+    );
+    if (specialistReply === undefined) {
+      throw new Error("expected the specialist reply to still be posted");
+    }
+    expect(specialistReply.threadId).toBe("thr_depth2");
+    expect(assignments).toEqual([
+      {
+        tenantId: "ten_1",
+        workbenchId: "ins_workbench1",
+        threadId: "thr_depth2",
+        messageId: specialistReply.id,
+      },
+    ]);
+
+    orchestrator.dispose();
+  });
+
+  test("an openReplyThread failure still posts the reply and leaves pending for a retry", async () => {
+    const room = fakeRoom();
+    const events = createSidecarEmitter();
+    let openAttempts = 0;
+    const runsByCallOrder = [
+      { id: "ins_myra1", tenantId: "ten_1" },
+      { id: "ins_echo1", tenantId: "ten_1" },
+      { id: "ins_echo1", tenantId: "ten_1" },
+    ];
+    let dbCallIndex = 0;
+    let launchCallIndex = 0;
+    const db = {
+      query: {
+        workflowRun: {
+          findFirst: async () => {
+            const run = runsByCallOrder[dbCallIndex];
+            dbCallIndex += 1;
+            return run === undefined
+              ? undefined
+              : { ...run, principalId: null };
+          },
+        },
+      },
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => {
+              const run = runsByCallOrder[launchCallIndex];
+              launchCallIndex += 1;
+              return run === undefined
+                ? []
+                : [launchRowFor(run.id, run.tenantId)];
+            },
+          }),
+        }),
+      }),
+    };
+    const orchestrator = createChatOrchestrator({
+      db: db as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", [
+            "ins_myra1@ten1.workbench.test",
+            "ins_echo1@ten1.workbench.test",
+          ]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads: {
+        openReplyThread: async (input) => {
+          openAttempts += 1;
+          if (openAttempts === 1) {
+            throw new Error("simulated thread-store outage");
+          }
+          return {
+            id: "thr_delegated",
+            tenantId: input.tenantId,
+            workbenchId: input.workbenchId,
+            kind: "reply",
+            parentMessageId: input.parentMessageId,
+            parentThreadId: "thr_root",
+            runRef: null,
+            title: null,
+            createdAt: new Date(),
+          };
+        },
+        assignMessage: async () => {},
+        threadIdForMessage: async () => undefined,
+      },
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_myra1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "connector.reply",
+        data: { content: "@ins_echo1 please handle" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_2",
+      event: {
+        type: "connector.reply",
+        data: { content: "first attempt during outage" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const first = room.posted.filter(
+      (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
+    );
+    expect(first).toHaveLength(1);
+    expect(first[0]?.threadId).toBeNull();
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_3",
+      event: {
+        type: "connector.reply",
+        data: { content: "retry nests under the mention" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const second = room.posted.filter(
+      (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
+    );
+    expect(second).toHaveLength(2);
+    expect(second[1]?.threadId).toBe("thr_delegated");
+    expect(openAttempts).toBe(2);
+
+    orchestrator.dispose();
+  });
+
+  test("assignMessage failure after a successful post still finishes the turn", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const turn = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      requestMessageIds: ["msg_in_fork"],
+    });
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads: {
+        openReplyThread: async () => {
+          throw new Error("ordinary fork replies must not open a new thread");
+        },
+        assignMessage: async () => {
+          throw new Error("simulated membership insert failure");
+        },
+        threadIdForMessage: async () => "thr_fork",
+      },
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: { type: "connector.reply", data: { content: "still delivered" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]?.threadId).toBe("thr_fork");
+    const finished = await agentTurns.listTurns({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+    });
+    expect(finished).toHaveLength(1);
+    expect(finished[0]?.id).toBe(turn.id);
+    expect(finished[0]?.status).toBe("completed");
+    expect(finished[0]?.replyMessageId).toBe(room.posted[0]?.id);
+
+    orchestrator.dispose();
+  });
+
+  test("a late reply after the turn already failed still uses that turn's request thread", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const turn = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      requestMessageIds: ["msg_in_fork"],
+    });
+    await agentTurns.finishTurn({
+      tenantId: "ten_1",
+      turnId: turn.id,
+      status: "failed",
+      error: "dispatch timed out",
+    });
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads: {
+        openReplyThread: async () => {
+          throw new Error("must not open a new thread for a late reply");
+        },
+        assignMessage: async () => {},
+        threadIdForMessage: async (_tenantId, _workbenchId, messageId) =>
+          messageId === "msg_in_fork" ? "thr_fork" : undefined,
+      },
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "connector.reply",
+        data: { content: "late answer still in the fork" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]?.threadId).toBe("thr_fork");
 
     orchestrator.dispose();
   });
@@ -965,6 +1467,7 @@ describe("createChatOrchestrator", () => {
         assignMessage: async (input) => {
           assignments.push(input);
         },
+        threadIdForMessage: async () => undefined,
       },
       events,
       claims: fakeClaims(),
@@ -1103,6 +1606,7 @@ describe("createChatOrchestrator", () => {
             };
           },
           assignMessage: async () => {},
+          threadIdForMessage: async () => undefined,
         },
         events,
         claims: fakeClaims(),
