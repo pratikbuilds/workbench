@@ -1968,8 +1968,8 @@ function ThreadAffordance({
     <div
       className={
         isOwn
-          ? "chat-thread-affordance -mt-[0.1rem] mb-[0.35rem] ml-auto mr-[2.9rem] flex max-w-fit items-center gap-2"
-          : "chat-thread-affordance -mt-[0.1rem] mb-[0.35rem] ml-[2.9rem] flex max-w-full items-center gap-2"
+          ? "chat-thread-affordance mt-[-0.1rem] mb-[0.35rem] ml-auto mr-[2.9rem] flex max-w-fit items-center gap-2"
+          : "chat-thread-affordance mt-[-0.1rem] mb-[0.35rem] ml-[2.9rem] flex max-w-full items-center gap-2"
       }
       data-message-id={messageId}
       data-thread-affordance-mode={mode}
