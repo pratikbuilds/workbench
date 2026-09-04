@@ -178,4 +178,67 @@ describe("own-message alignment is per viewer, not per message", () => {
     expect(group?.contains(tool)).toBe(true);
     expect(group?.contains(block)).toBe(true);
   });
+
+  test("own messages put Tailwind utilities on the thread affordance instead of a styles.css rule", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <WorkbenchTimeline
+          items={messageFrom("sawyer@agents.example")}
+          currentUser={{ principalId: "sawyer" }}
+          onOpenThread={() => undefined}
+          threadMetaByMessageId={
+            new Map([
+              [
+                "m1",
+                {
+                  replyCount: 2,
+                  lastActivityAt: null,
+                  participantAddresses: ["sawyer@agents.example"],
+                },
+              ],
+            ])
+          }
+        />,
+      );
+    });
+
+    const ownAffordance = container.querySelector(".chat-thread-affordance");
+    expect(ownAffordance?.className).toContain("ml-auto");
+    expect(ownAffordance?.className).toContain("mr-[2.9rem]");
+    expect(ownAffordance?.className).toContain("max-w-fit");
+    expect(
+      container.querySelector(".chat-thread-open")?.className,
+    ).toContain("ml-0");
+
+    await act(async () => {
+      root?.render(
+        <WorkbenchTimeline
+          items={messageFrom("sawyer@agents.example")}
+          currentUser={{ principalId: "pontus" }}
+          onOpenThread={() => undefined}
+          threadMetaByMessageId={
+            new Map([
+              [
+                "m1",
+                {
+                  replyCount: 2,
+                  lastActivityAt: null,
+                  participantAddresses: ["sawyer@agents.example"],
+                },
+              ],
+            ])
+          }
+        />,
+      );
+    });
+
+    const otherAffordance = container.querySelector(".chat-thread-affordance");
+    expect(otherAffordance?.className).toBe("chat-thread-affordance");
+    expect(
+      container.querySelector(".chat-thread-open")?.className,
+    ).toBe("chat-thread-open");
+  });
 });
