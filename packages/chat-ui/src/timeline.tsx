@@ -1960,16 +1960,16 @@ function ThreadAffordance({
         ? "1 reply"
         : `${replyCount} replies`;
 
-  // Own rows: shrink to content and mirror against the right avatar gutter
-  // (same 2.9rem the base `.chat-thread-affordance` uses on the left for
-  // everyone else's messages). Reset the Open button's ml-auto so it sits
-  // beside the meta once the row is no longer full-width.
+  // Layout lives in Tailwind so it wins over the unlayered styles.css
+  // chrome. Own rows shrink to content and mirror the 2.9rem avatar
+  // gutter on the right; other rows keep the left gutter and stretch so
+  // Open can sit at the trailing edge via ml-auto.
   return (
     <div
       className={
         isOwn
-          ? "chat-thread-affordance ml-auto mr-[2.9rem] max-w-fit"
-          : "chat-thread-affordance"
+          ? "chat-thread-affordance -mt-[0.1rem] mb-[0.35rem] ml-auto mr-[2.9rem] flex max-w-fit items-center gap-2"
+          : "chat-thread-affordance -mt-[0.1rem] mb-[0.35rem] ml-[2.9rem] flex max-w-full items-center gap-2"
       }
       data-message-id={messageId}
       data-thread-affordance-mode={mode}
@@ -1991,7 +1991,7 @@ function ThreadAffordance({
       </span>
       <button
         type="button"
-        className={isOwn ? "chat-thread-open ml-0" : "chat-thread-open"}
+        className={isOwn ? "chat-thread-open ml-0" : "chat-thread-open ml-auto"}
         onClick={onOpen}
       >
         {mode === "fork" ? CHAT_STRINGS.forkThreadAction : "Open"}
