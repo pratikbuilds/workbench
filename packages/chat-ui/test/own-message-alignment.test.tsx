@@ -209,6 +209,7 @@ describe("own-message alignment is per viewer, not per message", () => {
     expect(ownAffordance?.className).toContain("ml-auto");
     expect(ownAffordance?.className).toContain("mr-[2.9rem]");
     expect(ownAffordance?.className).toContain("max-w-fit");
+    expect(ownAffordance?.className).toContain("flex");
     expect(
       container.querySelector(".chat-thread-open")?.className,
     ).toContain("ml-0");
@@ -236,9 +237,11 @@ describe("own-message alignment is per viewer, not per message", () => {
     });
 
     const otherAffordance = container.querySelector(".chat-thread-affordance");
-    expect(otherAffordance?.className).toBe("chat-thread-affordance");
+    expect(otherAffordance?.className).toContain("ml-[2.9rem]");
+    expect(otherAffordance?.className).toContain("max-w-full");
+    expect(otherAffordance?.className).not.toContain("ml-auto");
     expect(
       container.querySelector(".chat-thread-open")?.className,
-    ).toBe("chat-thread-open");
+    ).toContain("ml-auto");
   });
 });
