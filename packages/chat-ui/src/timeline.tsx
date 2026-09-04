@@ -1863,6 +1863,7 @@ function MessagePartsInner({
             meta={threadMeta}
             mode={threadAffordanceMode}
             participants={participants}
+            isOwn={isOwn}
             onOpen={() => onOpenThread(item.id)}
           />
         ) : null}
@@ -1931,12 +1932,14 @@ function ThreadAffordance({
   meta,
   mode,
   participants,
+  isOwn,
   onOpen,
 }: {
   readonly messageId: string;
   readonly meta: ThreadAffordanceMeta | undefined;
   readonly mode: ThreadAffordanceMode;
   readonly participants: readonly ParticipantRecord[];
+  readonly isOwn: boolean;
   readonly onOpen: () => void;
 }) {
   const replyCount = meta?.replyCount ?? 0;
@@ -1957,9 +1960,17 @@ function ThreadAffordance({
         ? "1 reply"
         : `${replyCount} replies`;
 
+  // Own rows: shrink to content and mirror against the right avatar gutter
+  // (same 2.9rem the base `.chat-thread-affordance` uses on the left for
+  // everyone else's messages). Reset the Open button's ml-auto so it sits
+  // beside the meta once the row is no longer full-width.
   return (
     <div
-      className="chat-thread-affordance"
+      className={
+        isOwn
+          ? "chat-thread-affordance ml-auto mr-[2.9rem] max-w-fit"
+          : "chat-thread-affordance"
+      }
       data-message-id={messageId}
       data-thread-affordance-mode={mode}
     >
@@ -1978,7 +1989,11 @@ function ThreadAffordance({
           <span className="chat-thread-last-activity">{activity}</span>
         ) : null}
       </span>
-      <button type="button" className="chat-thread-open" onClick={onOpen}>
+      <button
+        type="button"
+        className={isOwn ? "chat-thread-open ml-0" : "chat-thread-open"}
+        onClick={onOpen}
+      >
         {mode === "fork" ? CHAT_STRINGS.forkThreadAction : "Open"}
       </button>
     </div>
