@@ -2,9 +2,9 @@
 // secret *issuer* here — the reverse of the `granola` api-key connector
 // above it in the grid, which stores a key Granola issued. This card
 // surfaces `@corbits/webhook-triggers`' existing mint/rotate machinery
-// against the tenant's `granola-call` routine(s): no new secret code, no
-// new backend route, just the Connections-surface view of an existing
-// binding.
+// against the tenant's `granola-call` workflow definition and its
+// webhook triggers: no new secret code, no new backend route, just the
+// Connections-surface view of an existing binding.
 //
 // "Granola-ish" means bound to the `granola-call` workflow definition
 // specifically — the one automatable Granola workflow in
@@ -34,16 +34,14 @@ import {
   describeQueryError,
 } from "@corbits/api-query";
 import {
-  bindRoutineWebhookTrigger,
   createGranolaWebhookTrigger,
-  listGranolaRoutines,
   listGranolaWebhookTriggers,
   listGranolaWorkflowDefinitions,
   rotateGranolaWebhookTriggerSecret,
   sampleGranolaWebhookPayload,
   webhookTriggerUrl,
-  type GranolaRoutine,
   type GranolaWebhookTrigger,
+  type WorkflowDefinitionSummary,
 } from "./granola-webhook-api";
 import { SETTINGS_STRINGS } from "./strings";
 import { CopyableCodeRow, WebhookSecretPanel } from "./webhook-secret-panel";
@@ -52,7 +50,7 @@ import { CopyableCodeRow, WebhookSecretPanel } from "./webhook-secret-panel";
 const GRANOLA_WORKFLOW_ASSET_NAME = "granola-call";
 
 type GranolaBinding = {
-  readonly routine: GranolaRoutine;
+  readonly definition: WorkflowDefinitionSummary;
   readonly webhookTrigger: GranolaWebhookTrigger | null;
 };
 
@@ -81,28 +79,19 @@ function mostRecentFiredAt(
 async function loadGranolaWebhookData(
   tenantId: string,
 ): Promise<GranolaWebhookData> {
-  const [routines, definitions, triggers] = await Promise.all([
-    listGranolaRoutines(tenantId),
+  const [definitions, triggers] = await Promise.all([
     listGranolaWorkflowDefinitions(tenantId),
     listGranolaWebhookTriggers(tenantId),
   ]);
-  const granolaDefinitionIds = new Set(
-    definitions
-      .filter((definition) => definition.name === GRANOLA_WORKFLOW_ASSET_NAME)
-      .map((definition) => definition.id),
+  const granolaDefinitions = definitions.filter(
+    (definition) => definition.name === GRANOLA_WORKFLOW_ASSET_NAME,
   );
-  const granolaRoutines = routines.filter((routine) =>
-    granolaDefinitionIds.has(routine.definitionId),
-  );
-  const triggersById = new Map(
-    triggers.map((trigger) => [trigger.id, trigger]),
-  );
-  const bindings = granolaRoutines.map((routine) => ({
-    routine,
+  const bindings = granolaDefinitions.map((definition) => ({
+    definition,
     webhookTrigger:
-      routine.trigger !== null && routine.trigger.kind === "webhook"
-        ? (triggersById.get(routine.trigger.webhookTriggerId) ?? null)
-        : null,
+      triggers.find(
+        (trigger) => trigger.workflowDefinitionId === definition.id,
+      ) ?? null,
   }));
   return { bindings };
 }
@@ -234,7 +223,7 @@ export function GranolaWebhookCard({
 }
 
 type RevealedSecret = {
-  readonly routineId: string;
+  readonly definitionId: string;
   readonly url: string;
   readonly secret: string;
 };
@@ -253,54 +242,49 @@ function GranolaWebhookDialog({
   readonly onChanged: () => void;
 }) {
   const [revealed, setRevealed] = useState<RevealedSecret | null>(null);
-  const [busyRoutineId, setBusyRoutineId] = useState<string | null>(null);
+  const [busyDefinitionId, setBusyDefinitionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setRevealed(null);
       setError(null);
-      setBusyRoutineId(null);
+      setBusyDefinitionId(null);
     }
   }, [open]);
 
-  function handleCreate(routine: GranolaRoutine) {
-    setBusyRoutineId(routine.id);
+  function handleCreate(definition: WorkflowDefinitionSummary) {
+    setBusyDefinitionId(definition.id);
     setError(null);
-    createGranolaWebhookTrigger(tenantId, routine.definitionId, routine.name)
-      .then((created) =>
-        bindRoutineWebhookTrigger(tenantId, routine.id, created.id).then(
-          () => created,
-        ),
-      )
+    createGranolaWebhookTrigger(tenantId, definition.id, definition.name)
       .then((created) => {
         setRevealed({
-          routineId: routine.id,
+          definitionId: definition.id,
           url: webhookTriggerUrl(created.id),
           secret: created.secret,
         });
         onChanged();
       })
       .catch((cause: unknown) => setError(describeQueryError(cause)))
-      .finally(() => setBusyRoutineId(null));
+      .finally(() => setBusyDefinitionId(null));
   }
 
   function handleRotate(binding: GranolaBinding) {
     const webhookTrigger = binding.webhookTrigger;
     if (webhookTrigger === null) return;
-    setBusyRoutineId(binding.routine.id);
+    setBusyDefinitionId(binding.definition.id);
     setError(null);
     rotateGranolaWebhookTriggerSecret(tenantId, webhookTrigger.id)
       .then((rotated) => {
         setRevealed({
-          routineId: binding.routine.id,
+          definitionId: binding.definition.id,
           url: webhookTriggerUrl(rotated.id),
           secret: rotated.secret,
         });
         onChanged();
       })
       .catch((cause: unknown) => setError(describeQueryError(cause)))
-      .finally(() => setBusyRoutineId(null));
+      .finally(() => setBusyDefinitionId(null));
   }
 
   return (
@@ -327,12 +311,12 @@ function GranolaWebhookDialog({
           ) : (
             bindings.map((binding) => (
               <div
-                key={binding.routine.id}
+                key={binding.definition.id}
                 className="settings-webhook-routine-row"
               >
                 <div className="settings-webhook-routine-row-header">
                   <span className="settings-connection-row-name">
-                    {binding.routine.name}
+                    {binding.definition.name}
                   </span>
                   {binding.webhookTrigger !== null && (
                     <span className="settings-connection-row-caption">
@@ -346,7 +330,7 @@ function GranolaWebhookDialog({
                     </span>
                   )}
                 </div>
-                {revealed?.routineId === binding.routine.id ? (
+                {revealed?.definitionId === binding.definition.id ? (
                   <WebhookSecretPanel
                     url={revealed.url}
                     secret={revealed.secret}
@@ -357,10 +341,10 @@ function GranolaWebhookDialog({
                     type="button"
                     size="sm"
                     variant="primary"
-                    disabled={busyRoutineId === binding.routine.id}
-                    onClick={() => handleCreate(binding.routine)}
+                    disabled={busyDefinitionId === binding.definition.id}
+                    onClick={() => handleCreate(binding.definition)}
                   >
-                    {busyRoutineId === binding.routine.id
+                    {busyDefinitionId === binding.definition.id
                       ? SETTINGS_STRINGS.connectionsSaving
                       : SETTINGS_STRINGS.connectionsWebhookCreateAction}
                   </Button>
@@ -384,10 +368,10 @@ function GranolaWebhookDialog({
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled={busyRoutineId === binding.routine.id}
+                        disabled={busyDefinitionId === binding.definition.id}
                         onClick={() => handleRotate(binding)}
                       >
-                        {busyRoutineId === binding.routine.id
+                        {busyDefinitionId === binding.definition.id
                           ? SETTINGS_STRINGS.connectionsWebhookRotating
                           : SETTINGS_STRINGS.connectionsWebhookRotateAction}
                       </Button>

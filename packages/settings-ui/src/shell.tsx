@@ -50,6 +50,10 @@ export type SettingsSectionGroup = {
   readonly id: string;
   readonly label: string;
   readonly sections: readonly SettingsSection[];
+  /** Set when a tenancy probe for a gated section in this group failed
+   *  (network/5xx), so a host can show a couldn't-check state instead of
+   *  treating the absent sections as an authenticated deny. */
+  readonly accessProbeFailed?: true;
 };
 
 export function flattenSettingsSections(

@@ -9,22 +9,26 @@ import { createToolGrantsForPins } from "./tool-grants";
 
 const DESCRIPTIONS = [
   {
-    name: "@corbits/routines-tools",
+    name: "@corbits/memory-tools",
     version: "0.0.1",
     tools: [
       {
-        qualifiedId: "@corbits/routines-tools/routines:routine_create",
+        qualifiedId: "@corbits/memory-tools/memory:memory_add",
         approval: "ask" as const,
       },
       {
-        qualifiedId: "@corbits/routines-tools/routines:routine_list",
+        qualifiedId: "@corbits/memory-tools/memory:memory_list",
       },
     ],
   },
   {
-    name: "@corbits/memory-tools",
+    name: "@corbits/connections-tools",
     version: "0.0.1",
-    tools: [{ qualifiedId: "@corbits/memory-tools/memory:memory_add" }],
+    tools: [
+      {
+        qualifiedId: "@corbits/connections-tools/connections:list_connections",
+      },
+    ],
   },
 ];
 
@@ -32,16 +36,16 @@ describe("createToolGrantsForPins", () => {
   test("mints tool:<qualifiedId>/invoke for every tool a pinned package declares", () => {
     const toolGrantsForPins = createToolGrantsForPins(DESCRIPTIONS);
     const grants = toolGrantsForPins([
-      { name: "@corbits/routines-tools", version: "^1" },
+      { name: "@corbits/memory-tools", version: "^1" },
     ]);
     expect(grants).toEqual([
       {
-        resource: "tool:@corbits/routines-tools/routines:routine_create",
+        resource: "tool:@corbits/memory-tools/memory:memory_add",
         action: "invoke",
         effect: "ask",
       },
       {
-        resource: "tool:@corbits/routines-tools/routines:routine_list",
+        resource: "tool:@corbits/memory-tools/memory:memory_list",
         action: "invoke",
         effect: "allow",
       },
@@ -51,26 +55,26 @@ describe("createToolGrantsForPins", () => {
   test('floors an unmarked tool at allow and a `approval: "ask"` tool at ask', () => {
     const toolGrantsForPins = createToolGrantsForPins(DESCRIPTIONS);
     const grants = toolGrantsForPins([
-      { name: "@corbits/routines-tools", version: "^1" },
+      { name: "@corbits/memory-tools", version: "^1" },
     ]);
-    expect(
-      grants.find((g) => g.resource.endsWith("routine_create"))?.effect,
-    ).toBe("ask");
-    expect(
-      grants.find((g) => g.resource.endsWith("routine_list"))?.effect,
-    ).toBe("allow");
+    expect(grants.find((g) => g.resource.endsWith("memory_add"))?.effect).toBe(
+      "ask",
+    );
+    expect(grants.find((g) => g.resource.endsWith("memory_list"))?.effect).toBe(
+      "allow",
+    );
   });
 
   test("unions grants across every pinned package", () => {
     const toolGrantsForPins = createToolGrantsForPins(DESCRIPTIONS);
     const grants = toolGrantsForPins([
-      { name: "@corbits/routines-tools", version: "^1" },
       { name: "@corbits/memory-tools", version: "^1" },
+      { name: "@corbits/connections-tools", version: "^1" },
     ]);
     expect(grants.map((g) => g.resource)).toEqual([
-      "tool:@corbits/routines-tools/routines:routine_create",
-      "tool:@corbits/routines-tools/routines:routine_list",
       "tool:@corbits/memory-tools/memory:memory_add",
+      "tool:@corbits/memory-tools/memory:memory_list",
+      "tool:@corbits/connections-tools/connections:list_connections",
     ]);
   });
 

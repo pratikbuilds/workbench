@@ -41,56 +41,6 @@ export function agentHasTools(agentName: string, tools: readonly string[]) {
   };
 }
 
-/** Passes once a routine named `routineName` exists whose trigger
- * carries `kind === trigger`. */
-export function routineHasTrigger(routineName: string, trigger: string) {
-  return function routineHasTriggerScorer(ctx: ScorerContext): ScorerResult {
-    const routine = ctx.world.routines.find((r) => r.name === routineName);
-    if (routine === undefined) {
-      return result(
-        "routineHasTrigger",
-        false,
-        `no routine named "${routineName}" exists yet`,
-      );
-    }
-    const kind =
-      typeof routine.trigger === "object" &&
-      routine.trigger !== null &&
-      "kind" in routine.trigger
-        ? (routine.trigger as Record<string, unknown>)["kind"]
-        : undefined;
-    return result(
-      "routineHasTrigger",
-      kind === trigger,
-      kind === trigger
-        ? `"${routineName}" has trigger.kind="${trigger}"`
-        : `"${routineName}" has trigger.kind=${JSON.stringify(kind)}, expected "${trigger}"`,
-    );
-  };
-}
-
-/** Passes once a routine named `routineName` exists and delivers to
- * `workbenchId`. */
-export function routineDeliversTo(routineName: string, workbenchId: string) {
-  return function routineDeliversToScorer(ctx: ScorerContext): ScorerResult {
-    const routine = ctx.world.routines.find((r) => r.name === routineName);
-    if (routine === undefined) {
-      return result(
-        "routineDeliversTo",
-        false,
-        `no routine named "${routineName}" exists yet`,
-      );
-    }
-    return result(
-      "routineDeliversTo",
-      routine.deliveryWorkbenchId === workbenchId,
-      routine.deliveryWorkbenchId === workbenchId
-        ? `"${routineName}" delivers to ${workbenchId}`
-        : `"${routineName}" delivers to ${JSON.stringify(routine.deliveryWorkbenchId)}, expected ${workbenchId}`,
-    );
-  };
-}
-
 /** Passes once a connection with the given `slug` is live (its
  * credential is active). */
 export function connectionIsLive(slug: string) {

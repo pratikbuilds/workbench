@@ -480,33 +480,60 @@ export function LibraryPage({
             ) : null}
             {workbenchScope !== null && onScopeChange !== undefined ? (
               // One control, two states — answers exactly one question
-              // ("whose files"), styled as the bordered segmented group
-              // `ViewToggle` already uses for rows/grid in this same bar, so
-              // it reads as one control rather than two stray chips.
-              <div
-                role="group"
-                aria-label="Files scope"
-                className="hidden items-center gap-0.5 rounded-md border border-border p-0.5 lg:flex"
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={scope === "workbench" ? "outline" : "ghost"}
-                  aria-pressed={scope === "workbench"}
-                  onClick={() => onScopeChange("workbench")}
+              // ("whose files"). At lg the bordered segmented group matches
+              // `ViewToggle` in this bar; below lg that group is hidden and
+              // the overflow menu in this same slot is the way to reach
+              // All workbenches.
+              <>
+                <div
+                  role="group"
+                  aria-label="Files scope"
+                  className="hidden items-center gap-0.5 rounded-md border border-border p-0.5 lg:flex"
                 >
-                  {workbenchScope.title}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={scope === "all" ? "outline" : "ghost"}
-                  aria-pressed={scope === "all"}
-                  onClick={() => onScopeChange("all")}
-                >
-                  All workbenches
-                </Button>
-              </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={scope === "workbench" ? "outline" : "ghost"}
+                    aria-pressed={scope === "workbench"}
+                    onClick={() => onScopeChange("workbench")}
+                  >
+                    {workbenchScope.title}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={scope === "all" ? "outline" : "ghost"}
+                    aria-pressed={scope === "all"}
+                    onClick={() => onScopeChange("all")}
+                  >
+                    All workbenches
+                  </Button>
+                </div>
+                <div className="lg:hidden">
+                  <Menu>
+                    <MenuTrigger asChild>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        aria-label="Files scope"
+                      >
+                        {scope === "all"
+                          ? "All workbenches"
+                          : workbenchScope.title}
+                      </Button>
+                    </MenuTrigger>
+                    <MenuContent align="end">
+                      <MenuItem onSelect={() => onScopeChange("workbench")}>
+                        {workbenchScope.title}
+                      </MenuItem>
+                      <MenuItem onSelect={() => onScopeChange("all")}>
+                        All workbenches
+                      </MenuItem>
+                    </MenuContent>
+                  </Menu>
+                </div>
+              </>
             ) : null}
             <Menu>
               <MenuTrigger asChild>

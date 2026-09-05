@@ -27,6 +27,15 @@ export type MailContent = {
    * including everything sent directly to a workbench's own anchor.
    */
   replyTo?: string;
+  /**
+   * RFC 5322 threading headers for the dispatched frame (CL-7450): the
+   * row's own `Message-ID` and the ancestry a reply correlates back
+   * through. `mailThreadHeaders` in `./mail-headers.ts` builds these from
+   * `mailAncestryOf`; absent on mail with no chat-row identity of its own.
+   */
+  messageId?: string;
+  inReplyTo?: string;
+  references?: readonly string[];
 };
 
 function encodeBase64(text: string): string {
@@ -49,12 +58,24 @@ function decodeBase64(data: string): string {
  */
 export function encodeParts(
   parts: Part[],
-  opts?: { replyTo?: string },
+  opts?: {
+    replyTo?: string;
+    messageId?: string;
+    inReplyTo?: string;
+    references?: readonly string[];
+  },
 ): MailContent {
   const replyTo = opts?.replyTo;
+  const threading = {
+    ...(opts?.messageId !== undefined ? { messageId: opts.messageId } : {}),
+    ...(opts?.inReplyTo !== undefined ? { inReplyTo: opts.inReplyTo } : {}),
+    ...(opts?.references !== undefined && opts.references.length > 0
+      ? { references: opts.references }
+      : {}),
+  };
 
   if (parts.length === 1 && parts[0]?.kind === "text") {
-    const base = { content: parts[0].text };
+    const base = { content: parts[0].text, ...threading };
     return replyTo !== undefined ? { ...base, replyTo } : base;
   }
 
@@ -73,7 +94,7 @@ export function encodeParts(
     };
   });
 
-  const base = { content: "", attachments };
+  const base = { content: "", attachments, ...threading };
   return replyTo !== undefined ? { ...base, replyTo } : base;
 }
 

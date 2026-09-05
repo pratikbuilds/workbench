@@ -69,7 +69,7 @@ export function mountSkills(deps: {
         const skill = byName.get(name);
         if (skill === undefined) {
           // Pinning a skill the pusher cannot see would advertise a
-          // skill `load_skill` will refuse to fetch at run time. Reject
+          // skill `skills_load` will refuse to fetch at run time. Reject
           // the push instead of shipping an index that lies.
           throw new SkillRegistryError(
             "not_found",

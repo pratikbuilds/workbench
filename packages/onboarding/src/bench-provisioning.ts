@@ -32,7 +32,11 @@
 // module stays out of the auth mechanism entirely.
 
 import { reportError } from "@corbits/error-sink";
-import { type WorkflowPusher } from "@corbits/seeding";
+import {
+  publishCorbitsToolsRegistry,
+  type ToolRegistryPublisher,
+  type WorkflowPusher,
+} from "@corbits/seeding";
 import { type ApiCall } from "@corbits/hub-api-client";
 import { ensureSeeded } from "./complete-credential";
 import { isFullySeeded } from "./provision";
@@ -70,6 +74,12 @@ export type BenchProvisionerDeps = {
    * the module-level imports above. */
   ensureSeededFn?: typeof ensureSeeded;
   isFullySeededFn?: typeof isFullySeeded;
+  /**
+   * Republish an empty or missing `corbits-tools` registry. Same job
+   * grant reconcile does on every sign-in — not a hot agent-launch
+   * path. Production uses `publishCorbitsToolsRegistry`.
+   */
+  publishToolRegistryFn?: ToolRegistryPublisher;
   now?: () => number;
 };
 
@@ -116,6 +126,8 @@ export function createBenchProvisioner(
   const logError = deps.logError ?? deps.log;
   const runEnsureSeeded = deps.ensureSeededFn ?? ensureSeeded;
   const runIsFullySeeded = deps.isFullySeededFn ?? isFullySeeded;
+  const runPublishToolRegistry =
+    deps.publishToolRegistryFn ?? publishCorbitsToolsRegistry;
 
   const inFlight = new Map<string, Promise<BenchProvisionOutcome>>();
   // Backoff bookkeeping for a failing bench, keyed the same way
@@ -191,6 +203,29 @@ export function createBenchProvisioner(
     if (cookies === undefined) {
       logError(
         `bench provisioning for tenant ${seed.tenantId} has no session to act under; holding for a later pass`,
+      );
+      return "failed";
+    }
+
+    // Repair an empty or missing corbits-tools registry the same way
+    // sign-in reconciles seed grants — before the fully-seeded check,
+    // so a bench whose assistant is already deployed does not drain as
+    // done while GET tarballs is still [].
+    try {
+      await runPublishToolRegistry({
+        api: deps.api,
+        cookies,
+        hubUrl: deps.hubUrl,
+        tenantId: seed.tenantId,
+        log: deps.log,
+      });
+    } catch (cause) {
+      reportError(cause, {
+        operation: "pending_seed_publish_tool_registry",
+        tenantId: seed.tenantId,
+      });
+      logError(
+        `bench provisioning for tenant ${seed.tenantId} could not publish corbits-tools; holding for a later pass`,
       );
       return "failed";
     }

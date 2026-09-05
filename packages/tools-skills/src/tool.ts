@@ -1,8 +1,8 @@
 // The `@corbits/tools-skills` bundle: `skills_list`, `skills_search`,
-// and `load_skill` — the agent-facing half of the skill registry. A
+// and `skills_load` — the agent-facing half of the skill registry. A
 // definition's pinned skills are already named in its system prompt's
 // `<available_skills>` index (`@corbits/skills`' `withAvailableSkills`);
-// `load_skill` is how the model turns one of those names into the actual
+// `skills_load` is how the model turns one of those names into the actual
 // instructions, so the index stays cheap and only the skills a turn
 // truly needs are paid for in context.
 //
@@ -19,7 +19,7 @@ import { listSkills, loadSkill, searchSkills } from "./client";
 
 export const SKILLS_LIST_TOOL = "skills_list";
 export const SKILLS_SEARCH_TOOL = "skills_search";
-export const LOAD_SKILL_TOOL = "load_skill";
+export const SKILLS_LOAD_TOOL = "skills_load";
 
 /** Env this bundle needs beyond `BaseEnv`: the run's hub-reach credential. */
 export interface WorkflowSkillsToolEnv extends BaseEnv {
@@ -80,13 +80,13 @@ async function runSkillsSearch(
   }
 }
 
-async function runLoadSkill(
+async function runSkillsLoad(
   env: WorkflowSkillsToolEnv,
   call: ToolCall,
 ): Promise<ToolResult> {
   const name = call.arguments["name"];
   if (typeof name !== "string" || name === "") {
-    return errorResult(call.id, new Error("load_skill requires a skill name"));
+    return errorResult(call.id, new Error("skills_load requires a skill name"));
   }
   try {
     const skill = await loadSkill(clientConfig(env), name);
@@ -102,7 +102,7 @@ export const skillsTools = defineTool<WorkflowSkillsToolEnv>({
   definitions: [
     { name: SKILLS_LIST_TOOL },
     { name: SKILLS_SEARCH_TOOL },
-    { name: LOAD_SKILL_TOOL },
+    { name: SKILLS_LOAD_TOOL },
   ],
   factory: (env) => ({
     definitions: [
@@ -130,7 +130,7 @@ export const skillsTools = defineTool<WorkflowSkillsToolEnv>({
         },
       },
       {
-        name: LOAD_SKILL_TOOL,
+        name: SKILLS_LOAD_TOOL,
         description:
           "Reads one skill's full instructions by name. Call this " +
           "before following a skill listed in <available_skills> — the " +
@@ -154,8 +154,8 @@ export const skillsTools = defineTool<WorkflowSkillsToolEnv>({
           return runSkillsList(env, call);
         case SKILLS_SEARCH_TOOL:
           return runSkillsSearch(env, call);
-        case LOAD_SKILL_TOOL:
-          return runLoadSkill(env, call);
+        case SKILLS_LOAD_TOOL:
+          return runSkillsLoad(env, call);
         default:
           return Promise.resolve(
             errorResult(

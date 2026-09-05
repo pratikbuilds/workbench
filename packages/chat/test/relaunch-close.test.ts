@@ -12,6 +12,7 @@
 // session really is a different session — which is the only reason
 // this test can fail.
 import { describe, expect, test } from "bun:test";
+import { createCryptoProviderCache } from "@corbits/folded-runs";
 import { agentSession } from "@intx/db/schema";
 import { workbenchLaunch } from "../src/schema";
 import { createHubChatPlatform } from "../src/platform-adapter";
@@ -115,6 +116,11 @@ function createPlatform(db: never) {
     assetService: {} as never,
     sidecarRouter: { getRoutableAddresses: () => [] } as never,
     eventCollectors: {} as never,
+    cryptoProviders: createCryptoProviderCache(),
+    credentialCipher: {
+      encrypt: async (plaintext: string) => plaintext,
+      decrypt: async (blob: string) => blob,
+    },
   });
 }
 

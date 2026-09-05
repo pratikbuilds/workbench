@@ -20,7 +20,7 @@
     "@corbits/hub-api-client": "workspace:*",
     "arktype": "catalog:",
     "drizzle-orm": "catalog:",
-    "hono": "^4.11.9",
+    "hono": "catalog:",
     "postgres": "catalog:"
   },
   "devDependencies": {

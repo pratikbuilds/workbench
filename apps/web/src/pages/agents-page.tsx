@@ -43,6 +43,7 @@ import {
   type AgentCapabilities,
   type AgentDefinition,
   type AgentInstance,
+  type CatalogModel,
 } from "../agents-api";
 import {
   purposeAgentDefinitions,
@@ -63,16 +64,21 @@ const DEFINITION_STATUS_TONE: Record<AgentDefinition["status"], BadgeTone> = {
   stopped: "neutral",
 };
 
+const DEFINITION_STATUS_LABEL: Record<AgentDefinition["status"], string> = {
+  deployed: "Deployed",
+  stopped: "Stopped",
+};
+
 /** The roster's Status column folds a definition's own deployed/stopped
  * state together with its live instances' statuses — a stopped definition
- * always reads Archived; a deployed one reads Running while any instance
+ * always reads Archived; a deployed one reads Live while any instance
  * is actively running, Blocked while any instance is erroring, otherwise
  * Idle. `instances` is expected to already be a tenant's top-level runs
  * (`listTopLevelRuns`), never the folded per-workbench-host noise. */
 export type AgentRosterStatus = "running" | "idle" | "blocked" | "archived";
 
 const AGENT_ROSTER_STATUS_LABEL: Record<AgentRosterStatus, string> = {
-  running: "Running",
+  running: "Live",
   idle: "Idle",
   blocked: "Blocked",
   archived: "Archived",
@@ -176,32 +182,60 @@ export type AgentModelCellState =
   | { readonly status: "ready"; readonly data: AgentCapabilities }
   | { readonly status: "error"; readonly message: string };
 
+function catalogModelLabel(
+  canonical: string,
+  catalog: readonly {
+    readonly canonicalName: string;
+    readonly displayName?: string | null;
+  }[],
+): string {
+  const match = catalog.find((model) => model.canonicalName === canonical);
+  return match?.displayName ?? canonical;
+}
+
 /** Settled Model-column content — an unset model reads as "Default"; a
- * fetch failure is a distinct error, never the same label. */
+ * fetch failure is a distinct error, never the same label. A set model
+ * maps through the tenant catalog's displayName (CL-6748), the same
+ * `displayName ?? canonicalName` reading settings already uses — never
+ * an invented label, and never a rewrite of an unset model to the
+ * tenant default (CL-6782). */
 export function agentModelSettledContent(
   state:
     | { readonly status: "ready"; readonly data: AgentCapabilities }
     | { readonly status: "error"; readonly message: string },
+  catalog: readonly {
+    readonly canonicalName: string;
+    readonly displayName?: string | null;
+  }[],
 ):
   | { readonly kind: "model"; readonly label: string }
   | { readonly kind: "error"; readonly message: string } {
   if (state.status === "error") {
     return { kind: "error", message: state.message };
   }
-  return { kind: "model", label: state.data.model ?? "Default" };
+  const canonical = state.data.model;
+  if (canonical === undefined) {
+    return { kind: "model", label: "Default" };
+  }
+  return { kind: "model", label: catalogModelLabel(canonical, catalog) };
 }
 
 /** Presentational half of the Model column — exported so tests can assert
  * the failure glyph without waiting on the per-row fetch effect. */
 export function AgentModelCellView({
   state,
+  catalog,
 }: {
   readonly state: AgentModelCellState;
+  readonly catalog: readonly {
+    readonly canonicalName: string;
+    readonly displayName?: string | null;
+  }[];
 }) {
   if (state.status === "loading") {
     return <Skeleton className="h-4 w-14" />;
   }
-  const settled = agentModelSettledContent(state);
+  const settled = agentModelSettledContent(state, catalog);
   if (settled.kind === "error") {
     return (
       <span className="text-xs text-destructive" role="alert">
@@ -209,19 +243,17 @@ export function AgentModelCellView({
       </span>
     );
   }
-  return (
-    <span className="font-mono text-xs text-muted-foreground">
-      {settled.label}
-    </span>
-  );
+  return <span className="text-xs text-muted-foreground">{settled.label}</span>;
 }
 
 function AgentModelCell({
   tenantId,
   definitionId,
+  catalog,
 }: {
   readonly tenantId: string;
   readonly definitionId: string;
+  readonly catalog: readonly CatalogModel[];
 }) {
   const [capabilities, setCapabilities] = useState<AgentModelCellState>({
     status: "loading",
@@ -247,7 +279,7 @@ function AgentModelCell({
     };
   }, [tenantId, definitionId]);
 
-  return <AgentModelCellView state={capabilities} />;
+  return <AgentModelCellView state={capabilities} catalog={catalog} />;
 }
 
 /** Settled Runs · 7d content — a failed top-level-runs fetch is never the
@@ -306,10 +338,12 @@ function AgentDetailPanel({
   tenantId,
   definition,
   workbenches,
+  catalog,
 }: {
   readonly tenantId: string;
   readonly definition: AgentDefinitionWithDisplayName;
   readonly workbenches: readonly DefinitionWorkbenchInstance[];
+  readonly catalog: readonly CatalogModel[];
 }) {
   const [capabilities, setCapabilities] = useState<
     | { readonly status: "loading" }
@@ -357,8 +391,11 @@ function AgentDetailPanel({
         <div className="flex items-center justify-between gap-2">
           <dt className="text-muted-foreground">Status</dt>
           <dd>
-            <Badge tone={DEFINITION_STATUS_TONE[definition.status]}>
-              {definition.status}
+            <Badge
+              tone={DEFINITION_STATUS_TONE[definition.status]}
+              className="normal-case"
+            >
+              {DEFINITION_STATUS_LABEL[definition.status]}
             </Badge>
           </dd>
         </div>
@@ -372,7 +409,9 @@ function AgentDetailPanel({
               <span className="text-destructive">{capabilities.message}</span>
             ) : null}
             {capabilities.status === "ready"
-              ? (capabilities.data.model ?? "Default")
+              ? capabilities.data.model === undefined
+                ? "Default"
+                : catalogModelLabel(capabilities.data.model, catalog)
               : null}
           </dd>
         </div>
@@ -435,6 +474,7 @@ export function AgentsPage({
   workbenches,
   instances,
   instancesError = null,
+  models = [],
   now = Date.now(),
   selectedId,
   onSelect,
@@ -454,6 +494,10 @@ export function AgentsPage({
   /** When the top-level-runs fetch failed — Status/Runs · 7d must not pretend
    * the history is empty (CL-6842). */
   readonly instancesError?: string | null;
+  /** Tenant catalog used to map a stored canonical model id to its
+   * person-readable displayName. Empty when the catalog failed independently
+   * — the column then shows the canonical, never an invented name. */
+  readonly models?: readonly CatalogModel[];
   readonly now?: number;
   readonly selectedId: string | null;
   readonly onSelect: (id: string | null) => void;
@@ -614,14 +658,9 @@ export function AgentsPage({
                             />
                           </TableCell>
                           <TableCell className="font-medium">
-                            <div className="flex flex-col">
-                              <span className="text-[13.5px] font-bold">
-                                {definition.displayName}
-                              </span>
-                              <span className="font-mono text-xs font-normal text-muted-foreground">
-                                {definition.name}
-                              </span>
-                            </div>
+                            <span className="text-[13.5px] font-bold">
+                              {definition.displayName}
+                            </span>
                           </TableCell>
                           <TableCell className="hidden text-muted-foreground lg:table-cell">
                             {definition.description !== null &&
@@ -643,7 +682,10 @@ export function AgentsPage({
                                     size="xs"
                                   />
                                 ) : null}
-                                <Badge tone={AGENT_ROSTER_STATUS_TONE[status]}>
+                                <Badge
+                                  tone={AGENT_ROSTER_STATUS_TONE[status]}
+                                  className="normal-case"
+                                >
                                   {AGENT_ROSTER_STATUS_LABEL[status]}
                                 </Badge>
                               </span>
@@ -654,6 +696,7 @@ export function AgentsPage({
                               <AgentModelCell
                                 tenantId={tenantId}
                                 definitionId={definition.id}
+                                catalog={models}
                               />
                             ) : (
                               <span className="text-muted-foreground">—</span>
@@ -681,6 +724,7 @@ export function AgentsPage({
               tenantId={tenantId}
               definition={selected}
               workbenches={workbenches.get(selected.id) ?? []}
+              catalog={models}
             />
           </div>
         ) : null}
@@ -783,6 +827,7 @@ export function AgentsRoute({
           ? describeApiError(runsQuery.error, "loading run history")
           : null
       }
+      models={directory.data.models}
       selectedId={selectedId}
       onSelect={(id) =>
         navigate(

@@ -9,12 +9,19 @@ export {
   createAgentDefinitionCore,
   DuplicateAgentHandleError,
   AGENT_DEFINITION_STEP_ID,
+  NonWildcardToolPackagePin,
   type AgentDefinitionCapabilities,
   type AgentDefinitionWorkflowInput,
   type CreateAgentDefinitionCoreDeps,
   type CreateAgentDefinitionCoreInput,
   type CreateAgentDefinitionCoreResult,
 } from "./agent-workflow";
+export type { NonWildcardToolPackagePin as NonWildcardToolPackagePinType } from "./agent-workflow";
+export {
+  resolvePinnedVersion,
+  type ResolvePinnedVersionDeps,
+  type ResolvedToolPackagePin,
+} from "./tool-package-version";
 export {
   agentDefinitionSourceTree,
   parseAgentDefinitionEntry,

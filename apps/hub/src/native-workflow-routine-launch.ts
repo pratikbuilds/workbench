@@ -108,10 +108,8 @@ export type TriggeredNativeWorkflowRun = {
  * `GET /workflows/:id/runs` for a run id that did not exist before this
  * call, then that run's own `/events` for its terminal event — see
  * `scripts/e2e/cl-6324-launch-proof.ts`'s `driveSectionOccurrence` for
- * the proven pattern. Nothing in this repo joins that per-fire
- * correlation back to `@corbits/routines`' run history yet; this
- * function's return value is deliberately the coarser deployment-level
- * handle until that join is built.
+ * the proven pattern. This function's return value is deliberately the
+ * coarser deployment-level handle until a per-fire join is built.
  */
 export async function triggerNativeWorkflowRoutineRun(
   deps: NativeWorkflowRoutineTriggerDeps,

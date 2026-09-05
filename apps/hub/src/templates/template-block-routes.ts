@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import type { RequireGrant, TenantEnv } from "@intx/hub-api";
 import { makeErrorEnvelope } from "@corbits/error-sink";
+import { catalogWorkflowDeployableOnThisPin } from "@corbits/seeding";
 
 import {
   buildBlockWorkflowSource,
@@ -19,6 +20,15 @@ import {
 
 const DEPLOY_FAILED_MESSAGE =
   "Couldn't set up this template's workflow. Try again in a moment.";
+
+// Six catalog workflows carry `credentialBindings` their definition needs
+// resolved at deploy time; this pin's `deployWorkflowSource` port has no
+// `credentialCipher` seam to resolve them (see
+// `catalogWorkflowDeployableOnThisPin`, `docs/seed-reconciliation.md`).
+// Refusing here, before `deployWorkflowSource` is ever called, keeps that
+// gap an honest 409 instead of the deployer throwing into the 500 branch
+// below.
+const NOT_DEPLOYABLE_YET_MESSAGE = "Coming with the next platform update.";
 
 export type TemplateBlockRoutesDeps = {
   requireGrant: RequireGrant;
@@ -73,6 +83,16 @@ export function createTemplateBlockRoutes(
             userMessage: `"${assetName}" isn't a deployable template workflow.`,
           }),
           404,
+        );
+      }
+
+      if (!catalogWorkflowDeployableOnThisPin(assetName)) {
+        return c.json(
+          makeErrorEnvelope({
+            code: "not_deployable_yet",
+            userMessage: NOT_DEPLOYABLE_YET_MESSAGE,
+          }),
+          409,
         );
       }
 

@@ -14,6 +14,18 @@ mock.module("@corbits/error-sink", () => ({
     return "ref_test";
   },
   generateRefId: () => "ref_test",
+  makeErrorEnvelope: (args: {
+    code: string;
+    userMessage: string;
+    refId?: string;
+  }) => ({
+    error: {
+      code: args.code,
+      message: args.userMessage,
+      refId: args.refId ?? "ref_test",
+    },
+  }),
+  parseErrorEnvelope: () => null,
 }));
 
 const { runBulkOperation } = await import("../src/bulk-run");

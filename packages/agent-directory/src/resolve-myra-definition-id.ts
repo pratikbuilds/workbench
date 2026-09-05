@@ -1,9 +1,9 @@
 // Resolves Myra's own workflow-definition id for a tenant — the one
 // piece of DB wiring every one-shot Myra caller in this codebase needs
-// (this package's own `agent-definition-drafting.ts`, `@corbits/routines`'
-// `myra-drafting.ts`), each of which takes it as an injected
-// `resolveMyraDefinitionId` port rather than importing this module
-// directly, so a test can stub it without touching a database.
+// (this package's own `agent-definition-drafting.ts`), each of which
+// takes it as an injected `resolveMyraDefinitionId` port rather than
+// importing this module directly, so a test can stub it without
+// touching a database.
 import { and, eq } from "drizzle-orm";
 import type { DB } from "@intx/db";
 import { workflowDefinition } from "@intx/db/schema";

@@ -122,6 +122,16 @@
   display: flex;
   align-items: flex-end;
   gap: 0.5rem;
+  min-width: min-content;
+}
+
+/* .page-fill td nowrap+ellipsis clips action controls. Settings tables
+   keep truncation on data cells; Actions cells must show their contents. */
+.settings-shell .settings-actions-cell {
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  min-width: min-content;
 }
 
 .settings-inline-error {

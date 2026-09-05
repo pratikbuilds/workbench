@@ -41,12 +41,15 @@ export type TurnClaimStore = {
   /**
    * Un-claims `workbenchId` — called once the turn that won the claim
    * has settled, success or failure alike, so the next queued batch (or
-   * a fresh message) can run. A no-op (returns `false`) if `token` is
-   * not the current holder — e.g. the TTL already reassigned the claim
-   * to a second winner, in which case releasing here would free a
-   * claim this caller no longer owns. Never left un-called on a path
-   * that can still complete; the TTL below is only the backstop for a
-   * dispatch that never settles at all.
+   * a fresh message) can run. Always returns `false` if `token` is not
+   * the current live holder — e.g. the TTL already reassigned the claim
+   * to a second winner, in which case releasing here would free a claim
+   * this caller no longer owns — but may still evict the entry it
+   * found: an already-expired entry carries no live claim for anyone
+   * to lose, so finding one is incidental cleanup, never this call's
+   * own claim to release. Never left un-called on a path that can
+   * still complete; the TTL below is only the backstop for a dispatch
+   * that never settles at all.
    */
   release(claim: TurnClaim, token: TurnClaimToken): Promise<boolean>;
   /**
@@ -54,7 +57,7 @@ export type TurnClaimStore = {
    * `workbenchId`'s claim — how a long-running holder notices the TTL
    * reassigned its claim to someone else without itself calling
    * `tryClaim` again (which would attempt to *take* the claim, not just
-   * check it).
+   * check it). Observing an expired entry deletes it (CL-7200).
    */
   holds(claim: TurnClaim, token: TurnClaimToken): Promise<boolean>;
 };
@@ -99,10 +102,28 @@ export function createInMemoryTurnClaimStore(options: {
     return now() - holder.claimedAt >= options.ttlMs;
   }
 
+  /**
+   * The live holder of `workbenchId`, or `undefined` if nobody holds it.
+   * An expired entry is deleted here so the map agrees with what
+   * `tryClaim`/`holds`/`release` already conclude — rather than lingering
+   * until a future `tryClaim` for this workbench happens to overwrite it
+   * (CL-7200).
+   */
+  function liveHolder(
+    workbenchId: string,
+  ): { token: string; claimedAt: number } | undefined {
+    const existing = holders.get(workbenchId);
+    if (existing === undefined) return undefined;
+    if (isExpired(existing)) {
+      holders.delete(workbenchId);
+      return undefined;
+    }
+    return existing;
+  }
+
   return {
     async tryClaim(claim) {
-      const existing = holders.get(claim.workbenchId);
-      if (existing !== undefined && !isExpired(existing)) {
+      if (liveHolder(claim.workbenchId) !== undefined) {
         return false;
       }
       const token = String(++nextToken);
@@ -110,7 +131,7 @@ export function createInMemoryTurnClaimStore(options: {
       return token;
     },
     async release(claim, token) {
-      const existing = holders.get(claim.workbenchId);
+      const existing = liveHolder(claim.workbenchId);
       if (existing === undefined || existing.token !== token) {
         return false;
       }
@@ -118,12 +139,8 @@ export function createInMemoryTurnClaimStore(options: {
       return true;
     },
     async holds(claim, token) {
-      const existing = holders.get(claim.workbenchId);
-      return (
-        existing !== undefined &&
-        existing.token === token &&
-        !isExpired(existing)
-      );
+      const existing = liveHolder(claim.workbenchId);
+      return existing !== undefined && existing.token === token;
     },
   };
 }

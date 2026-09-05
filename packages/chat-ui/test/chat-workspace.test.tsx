@@ -55,6 +55,7 @@ type WorkbenchAgentFixture = {
   readonly handle: string;
   readonly definitionId: string;
   readonly definitionAssetId: string;
+  readonly displayName: string;
 };
 
 function stubFetch(
@@ -977,12 +978,14 @@ describe("composer slash commands — each wired command's real action", () => {
           handle: "echo",
           definitionId: "def_echo",
           definitionAssetId: "asset_echo",
+          displayName: "Echo",
         },
         {
           address: "agent:asset_digest/ins_2",
           handle: "digest",
           definitionId: "def_digest",
           definitionAssetId: "asset_digest",
+          displayName: "Digest",
         },
       ],
     });
@@ -1015,6 +1018,7 @@ describe("composer slash commands — each wired command's real action", () => {
           handle: "echo",
           definitionId: "def_echo",
           definitionAssetId: "asset_echo",
+          displayName: "Echo",
         },
       ],
     });
@@ -2003,7 +2007,7 @@ describe("Workbench header polish (CL-6106)", () => {
     harness.unmount();
   });
 
-  test("agent participant chips share the roster's circular avatar, keeping the handle as a hover tooltip", async () => {
+  test("agent participant chips live in the square member stack, naming the agent by display name (CL-6424 supersedes the raw-handle tooltip)", async () => {
     stubFetch(undefined, WORKBENCH_WITH_AGENT_WIRE);
     const harness = await mount({
       tenant: { kind: "ready", tenantId: "tnt_1" },
@@ -2012,11 +2016,11 @@ describe("Workbench header polish (CL-6106)", () => {
     await harness.settle();
 
     const chip = harness.container.querySelector(
-      '.chat-presence-avatar[data-agent="true"]',
+      '.member-avatar[data-agent="true"]',
     );
     expect(chip).not.toBeNull();
-    expect((chip as HTMLElement).title).toBe("researcher");
-    expect((chip as HTMLElement).textContent).toBe("R");
+    expect((chip as HTMLElement).title).toBe("Researcher");
+    expect(chip?.querySelector('[data-corbit="true"]')).not.toBeNull();
     harness.unmount();
   });
 
@@ -2037,6 +2041,111 @@ describe("Workbench header polish (CL-6106)", () => {
 
     const actions = harness.container.querySelector(".chat-workbench-actions");
     expect(actions?.lastElementChild?.contains(button)).toBe(true);
+    harness.unmount();
+  });
+
+  test("headerSlot lifts identity and actions out of the in-stage header", async () => {
+    stubFetch();
+    const harness = await mount({
+      tenant: { kind: "ready", tenantId: "tnt_1" },
+      workbenchId: "ch_1",
+      headerSlot: (chrome) =>
+        createElement(
+          "div",
+          { "data-testid": "host-stage-bar" },
+          chrome.crumbs.map((crumb) => crumb.label).join(" / "),
+          chrome.actions,
+        ),
+    });
+    await harness.settle();
+
+    expect(
+      harness.container.querySelector(".chat-workbench-header"),
+    ).toBeNull();
+    const hostBar = harness.container.querySelector(
+      '[data-testid="host-stage-bar"]',
+    );
+    expect(hostBar).not.toBeNull();
+    expect(hostBar?.textContent).toContain("Launch Planning");
+    expect(
+      harness.container.querySelector('button[aria-label="Settings"]'),
+    ).not.toBeNull();
+    harness.unmount();
+  });
+
+  test("headerSlot thread view has one aria-current=page and a clickable close-thread", async () => {
+    stubThreadedFetch();
+    const harness = await mount({
+      tenant: { kind: "ready", tenantId: "tnt_1" },
+      workbenchId: "ch_1",
+      headerSlot: (chrome) =>
+        createElement(
+          "div",
+          { "data-testid": "host-stage-bar" },
+          createElement(
+            "span",
+            { "aria-current": "page" },
+            chrome.crumbs.at(-1)?.label,
+          ),
+          chrome.subtitle !== undefined
+            ? createElement(
+                "div",
+                { className: "stage-top-bar-sub" },
+                chrome.subtitle,
+              )
+            : null,
+          chrome.actions,
+        ),
+    });
+    await harness.settle();
+
+    const openButton = harness.container.querySelector(
+      ".chat-thread-open",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      openButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await sleep(30);
+    });
+
+    expect(
+      harness.container.querySelectorAll('[aria-current="page"]'),
+    ).toHaveLength(1);
+    expect(
+      harness.container
+        .querySelector(".chat-thread-breadcrumb-current")
+        ?.getAttribute("aria-current"),
+    ).toBeNull();
+
+    const closeThread = harness.container.querySelector(
+      ".chat-thread-breadcrumb-link",
+    ) as HTMLButtonElement;
+    expect(closeThread).not.toBeNull();
+    await act(async () => {
+      closeThread.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await sleep(30);
+    });
+    expect(
+      harness.container.querySelector(".chat-thread-breadcrumb"),
+    ).toBeNull();
+    harness.unmount();
+  });
+
+  test("headerSlot still titles the stage while the tenant is loading", async () => {
+    const harness = await mount({
+      tenant: { kind: "loading" },
+      headerSlot: (chrome) =>
+        createElement(
+          "div",
+          { "data-testid": "host-stage-bar" },
+          chrome.crumbs[0]?.label,
+        ),
+    });
+    await harness.settle();
+
+    expect(
+      harness.container.querySelector('[data-testid="host-stage-bar"]')
+        ?.textContent,
+    ).toBe("Workbenches");
     harness.unmount();
   });
 });

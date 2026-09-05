@@ -9,8 +9,8 @@ export {
 } from "./client";
 export {
   skillsTools,
-  LOAD_SKILL_TOOL,
   SKILLS_LIST_TOOL,
+  SKILLS_LOAD_TOOL,
   SKILLS_SEARCH_TOOL,
   type WorkflowSkillsToolEnv,
 } from "./tool";

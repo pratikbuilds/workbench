@@ -15,6 +15,7 @@ import { parseParticipants } from "@corbits/chat/participants";
 import type { ParticipantRecord } from "@corbits/chat/participants";
 import type { WorkbenchOnboardingStep } from "@corbits/chat/blocks";
 import { UnauthenticatedError } from "@corbits/api-query";
+import { InferenceSettingsApiError } from "@corbits/inference-settings";
 import { jimmyAgentRequest } from "@workbench/templates";
 import { CHAT_STRINGS } from "./strings";
 
@@ -215,25 +216,38 @@ export class ChatApiError extends Error {
 /**
  * Plain-language copy for a failed chat request — never `error.message`
  * or `String(error)` verbatim, which for a `ChatApiError` embeds the raw
- * request path (see `request()` below). Every chat-ui/chat-adjacent
- * catch block that surfaces an error to the user should call this
- * rather than format one of its own, so the class of leak (a raw
- * `/api/...` URL or bare status code in user-facing copy) has exactly
- * one place to fix.
+ * request path (see `request()` below). `InferenceSettingsApiError`
+ * carries the envelope `userMessage` (safe to show) rather than a path,
+ * so a 500 from `getResolvedCatalog` surfaces that sentence instead of
+ * the generic fallback. Every chat-ui/chat-adjacent catch block that
+ * surfaces an error to the user should call this rather than format one
+ * of its own, so the class of leak (a raw `/api/...` URL or bare status
+ * code in user-facing copy) has exactly one place to fix.
  */
 export function describeChatError(cause: unknown, fallback: string): string {
-  if (!(cause instanceof ChatApiError)) return fallback;
-  switch (cause.status) {
+  const statused =
+    cause instanceof ChatApiError || cause instanceof InferenceSettingsApiError
+      ? cause
+      : null;
+  if (statused === null) return fallback;
+  switch (statused.status) {
     case 401:
       return "You're signed out. Sign in again to continue.";
     case 403:
       return "You don't have access to this.";
     case undefined:
       return "Couldn't reach the server. Check your connection and try again.";
-    default:
-      return cause.status >= 500
+    default: {
+      if (
+        cause instanceof InferenceSettingsApiError &&
+        statused.message.trim() !== ""
+      ) {
+        return statused.message;
+      }
+      return statused.status >= 500
         ? "Something went wrong on our end. Try again in a moment."
         : fallback;
+    }
   }
 }
 
@@ -797,6 +811,7 @@ const WorkbenchAgentWire = type({
   handle: "string",
   definitionId: "string",
   definitionAssetId: "string",
+  displayName: "string",
 });
 export type WorkbenchAgent = typeof WorkbenchAgentWire.infer;
 
@@ -1056,6 +1071,7 @@ const BlockResponsePayloadWire = type({
       kind: "'question'",
       answer: "string",
       "optionIndex?": "number",
+      notifiedAt: "string | null",
     }),
   );
 export type BlockResponsePayload = typeof BlockResponsePayloadWire.infer;

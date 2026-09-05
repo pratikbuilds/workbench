@@ -409,8 +409,8 @@ export function createSidecarStepBuildEnv(
       // surface.
       hubCapabilitiesUrl: deps.hubArtifactsUrl,
       // Same hub HTTP origin again, under the keys the Myra manager-tools
-      // bundles declare (CL-5879 follow-up: routines-tools,
-      // connections-tools, agent-directory-tools) for their own
+      // bundles declare (CL-5879 follow-up: connections-tools,
+      // agent-directory-tools) for their own
       // workflow-run-authenticated surfaces — one hub origin, one env key
       // per tool-bundle surface, matching every precedent above rather
       // than overloading an existing name for an unrelated surface.

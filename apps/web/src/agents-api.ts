@@ -24,6 +24,7 @@ import {
   toAPIQuery,
 } from "@corbits/api-query";
 import { isChatPickerModelName } from "@corbits/connections/model-capability";
+import { parseErrorEnvelope } from "@corbits/error-sink";
 import { tenantKeys } from "./query-client";
 
 export type AgentDefinition = typeof WorkflowDefinitionResponse.infer;
@@ -31,7 +32,15 @@ export type AgentInstance = typeof WorkflowRunResponse.infer;
 export type CatalogModel = typeof ModelResponse.infer;
 
 const RunFireResponse = WorkflowRunResponse.and(
-  type({ routineId: "string | null", routineName: "string | null" }),
+  type({
+    routineId: "string | null",
+    routineName: "string | null",
+    "hasInFlightTurn?": "boolean",
+    "turns?": type({
+      status: "string",
+      "endedAt?": "string | null",
+    }).array(),
+  }),
 );
 /** A `feed=fires` row: every `AgentInstance` field plus the routine that
  * fired it (both `null` for a directly-triggered deployment with no
@@ -83,10 +92,6 @@ async function getJSON<T>(path: string, schema: Validator<T>): Promise<T> {
   return parsed;
 }
 
-const ErrorEnvelope = type({
-  error: { code: "string", userMessage: "string", refId: "string" },
-});
-
 async function postJSON<T>(
   path: string,
   schema: Validator<T>,
@@ -109,12 +114,13 @@ async function postJSON<T>(
   }
   const json: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
-    const envelope = ErrorEnvelope(json);
-    const message =
-      envelope instanceof type.errors
-        ? `The server answered ${response.status}.`
-        : envelope.error.userMessage;
-    throw new ApiQueryError(message, response.status, path);
+    const envelope = parseErrorEnvelope(json);
+    throw new ApiQueryError(
+      envelope?.error.userMessage ?? `The server answered ${response.status}.`,
+      response.status,
+      path,
+      envelope?.error.refId,
+    );
   }
   const parsed = schema(json);
   if (parsed instanceof type.errors) {

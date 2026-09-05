@@ -117,13 +117,13 @@ export type FoldedRunsDeps = {
   /**
    * Decrypts credential secrets when a launch resolves inference sources
    * against the tenant catalog (`resolveDefinitionSources`, called from
-   * `deployAtHead`). Optional: omitted, `resolveDefinitionSources` falls
-   * back to a noop cipher that returns a stored secret unchanged — correct
-   * only when the secret was itself written unencrypted. The composition
-   * root (`apps/hub`) must supply the same real cipher its credential
-   * write route encrypts with, or every folded-run launch (workbench hosts,
-   * invited agents, routines, tasks) decrypts nothing and hands the raw
-   * ciphertext to the provider as its API key.
+   * `deployAtHead`). The composition root tags this at hub boot
+   * (`hubCredentialCipher`) and again when minting a `FoldedRunsDeps`
+   * bag (`tagCredentialCipher`); missing or wrong-shape input fails
+   * closed rather than falling through to a noop cipher that would
+   * hand ciphertext to the provider as an API key. Optional only for
+   * callers that never resolve catalog secrets (a mint-only path, a
+   * test double that does not decrypt). Persist paths do not re-assert.
    */
   credentialCipher?: CredentialCipher;
   /** See `ToolGrantsForPins`'s own doc. */

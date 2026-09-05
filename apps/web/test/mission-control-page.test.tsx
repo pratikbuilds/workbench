@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 
 import type { Workbench } from "@corbits/chat-ui";
+import { FIRE_RUNNING_WINDOW_MS } from "@corbits/workflows/client";
 
 import { BenchContext, type BenchState } from "../src/bench-context";
 import { NavigationProvider } from "../src/navigation";
@@ -26,7 +27,7 @@ function routine(overrides: Partial<RoutineActivityItem>): RoutineActivityItem {
     id: "rtn_1",
     name: "Weekly digest",
     status: "running",
-    startedAt: "2026-08-19T09:00:00.000Z",
+    startedAt: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -57,15 +58,55 @@ describe("computeInFlightRows", () => {
       routine({
         id: "old",
         status: "running",
-        startedAt: "2026-08-19T08:00:00.000Z",
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
       }),
       routine({
         id: "new",
         status: "running",
-        startedAt: "2026-08-19T11:00:00.000Z",
+        startedAt: new Date().toISOString(),
       }),
     ]);
     expect(rows.map((row) => row.key)).toEqual(["routine:new", "routine:old"]);
+  });
+
+  test("a running routine still inside the fire window stays in-flight", () => {
+    const rows = computeInFlightRows([
+      routine({
+        id: "fresh",
+        status: "running",
+        startedAt: new Date().toISOString(),
+      }),
+    ]);
+    expect(rows.map((row) => row.key)).toEqual(["routine:fresh"]);
+    expect(rows[0]?.statusLabel).toBe("Running now");
+  });
+
+  // Warm-keep (CL-6681 / CL-6778): Mission Control's active-run count and
+  // in-flight table must not keep a finished fire as "Running" forever just
+  // because the delivery agent is still deployed.
+  test("endedAt drops a just-finished running routine from in-flight immediately", () => {
+    const rows = computeInFlightRows([
+      routine({
+        id: "just-finished",
+        status: "running",
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+      }),
+    ]);
+    expect(rows).toEqual([]);
+  });
+
+  test("a live running routine past the fire window stays in-flight", () => {
+    const rows = computeInFlightRows([
+      routine({
+        id: "stale",
+        status: "running",
+        startedAt: new Date(
+          Date.now() - FIRE_RUNNING_WINDOW_MS - 1,
+        ).toISOString(),
+      }),
+    ]);
+    expect(rows.map((row) => row.key)).toEqual(["routine:stale"]);
   });
 });
 

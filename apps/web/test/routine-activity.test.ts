@@ -9,6 +9,8 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { FIRE_RUNNING_WINDOW_MS } from "@corbits/workflows/client";
+
 import { listRoutineActivity } from "../src/shell/routine-activity";
 
 const realFetch = globalThis.fetch;
@@ -38,8 +40,8 @@ const runningFire = {
   tenantId: "tnt_1",
   address: "run_1@tnt1.example",
   status: "running",
-  createdAt: "2026-01-01T00:00:00.000Z",
-  updatedAt: "2026-01-01T00:00:00.000Z",
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
   routineId: "rtn_1",
   routineName: "Weekly digest",
 };
@@ -81,7 +83,7 @@ describe("listRoutineActivity", () => {
         id: "run_1",
         name: "Weekly digest",
         status: "running",
-        startedAt: "2026-01-01T00:00:00.000Z",
+        startedAt: runningFire.createdAt,
       },
     ]);
   });
@@ -96,6 +98,36 @@ describe("listRoutineActivity", () => {
     const [item] = await listRoutineActivity("tnt_1");
 
     expect(item?.status).not.toBe("running");
+  });
+
+  test("endedAt drops a just-finished running fire from running immediately", async () => {
+    stubTopLevelRunsFetch([
+      {
+        ...runningFire,
+        endedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const [item] = await listRoutineActivity("tnt_1");
+
+    expect(item?.status).not.toBe("running");
+  });
+
+  // A live fire still in a tool loop can outlast the abandoned-fire
+  // window. Persist has not settled, so the row stays running.
+  test("a live running fire past the window still reads as running", async () => {
+    stubTopLevelRunsFetch([
+      {
+        ...runningFire,
+        createdAt: new Date(
+          Date.now() - FIRE_RUNNING_WINDOW_MS - 1,
+        ).toISOString(),
+      },
+    ]);
+
+    const [item] = await listRoutineActivity("tnt_1");
+
+    expect(item?.status).toBe("running");
   });
 
   // A directly-triggered deployment run is also a `feed=fires` row (it is

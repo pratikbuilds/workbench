@@ -12,13 +12,14 @@
 // own. Reading state and starting reviews call the workbench-scoped routes
 // `@corbits/connections`'s `createConnectGithubRoutes` exposes.
 //
-// `subscribeConnectState` has no server push to fold from yet (connecting a
-// credential publishes no `chat.settings` event of its own — only
-// `start-reviewing` does, through the settings PATCH `startReviewing`
-// triggers). Every action that can change the card's state
-// (`submitAccessToken`, `startReviewing`, `skip`) re-reads `getConnectState`
-// itself and fans the result out to every subscriber, so the card still
-// only ever fires one fetch per real change — never a poll loop.
+// `subscribeConnectState` is the card's live fold. Actions this host
+// itself runs (`submitAccessToken`, `startReviewing`, `skip`) re-read
+// `getConnectState` and fan the result out. A credential completed
+// elsewhere publishes `chat.settings`; ChatWorkspace parses that event
+// and calls `notifySettingsChanged`, which reuses the same refresh so
+// a mounted card flips without remounting (CL-6476). Every action that
+// can change the card's state still only fires one fetch per real
+// change — never a poll loop.
 import type {
   ConnectGithubActions,
   ConnectGithubQuery,
@@ -55,6 +56,9 @@ export function createChatConnectGithubActions(
       return () => {
         listeners.delete(onUpdate);
       };
+    },
+    async notifySettingsChanged() {
+      await refresh();
     },
     requestConnect() {
       // The card's inline field is what actually collects and submits the

@@ -229,6 +229,7 @@ describe("canvas artifact pane: co-editing (CL-5958 phase 2)", () => {
       readonly canEdit?: boolean;
     };
     readonly artifactDoc?: import("yjs").Doc;
+    readonly presenceConnection?: "ok" | "degraded";
   }): Promise<void> {
     await act(async () => {
       root.render(
@@ -246,6 +247,9 @@ describe("canvas artifact pane: co-editing (CL-5958 phase 2)", () => {
                 onNavigate={noop}
                 {...(props.artifactDoc !== undefined
                   ? { artifactDoc: props.artifactDoc }
+                  : {})}
+                {...(props.presenceConnection !== undefined
+                  ? { presenceConnection: props.presenceConnection }
                   : {})}
               />
             </BenchProvider>
@@ -358,5 +362,33 @@ describe("canvas artifact pane: co-editing (CL-5958 phase 2)", () => {
 
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.textContent).toContain("fetched content");
+  });
+
+  test("a degraded presence connection shows a quiet reconnecting caption", async () => {
+    await renderArtifact({
+      artifact: {
+        id: "art_6",
+        title: "Notes",
+        rendererKind: "doc",
+        content: "fetched content",
+      },
+      presenceConnection: "degraded",
+    });
+
+    expect(container.textContent).toContain("Reconnecting…");
+  });
+
+  test("a healthy presence connection shows no reconnecting caption", async () => {
+    await renderArtifact({
+      artifact: {
+        id: "art_7",
+        title: "Notes",
+        rendererKind: "doc",
+        content: "fetched content",
+      },
+      presenceConnection: "ok",
+    });
+
+    expect(container.textContent).not.toContain("Reconnecting…");
   });
 });

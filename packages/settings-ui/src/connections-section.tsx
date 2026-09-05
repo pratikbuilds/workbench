@@ -465,6 +465,10 @@ function ModelRoutePanel({
   }
 
   function chooseModel(canonicalName: string) {
+    // Tenant default is an offering-priority write only (CL-6782). Existing
+    // agents keep whatever `capabilities.model` they already store; new
+    // agents may still pick up the default at create. Never PATCH
+    // `/agent-definitions`.
     const target = ordered.find((row) => row.canonicalName === canonicalName);
     applyPatches(
       target === undefined
@@ -485,8 +489,8 @@ function ModelRoutePanel({
         <div>
           <h3 id="model-route-title">Default model & fallbacks</h3>
           <p>
-            Used by Myra and new workbenches unless an agent chooses its own
-            model.
+            Used by Myra and new agents. Changing the default does not rewrite
+            models already stored on existing agents.
           </p>
         </div>
       </div>

@@ -617,6 +617,13 @@
       "when": 1787900000000,
       "tag": "0088_workflow_definition_version_tolerate_body_failure",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1788000000000,
+      "tag": "0089_workflow_definition_schedule_claimed_minute",
+      "breakpoints": true
     }
   ]
 }

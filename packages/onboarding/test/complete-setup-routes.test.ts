@@ -631,7 +631,13 @@ describe("POST /complete-setup", () => {
   // itself — deploying only what is missing on a later pass — is
   // covered by "a half-provisioned bench keeps its row and converges on
   // a later pass" in ./bench-provisioning.test.ts.
-  test("a bench whose agents are not all live keeps its pending row for the drain", async () => {
+  //
+  // CL-7074 narrowed DEFAULT_WORKFLOWS to just the setup agent, so
+  // "partway through" no longer means "one of several live, the rest
+  // pending" — it means the one default workflow's asset exists but
+  // has not gone live yet (the sidecar push landed, the deploy
+  // confirmation has not).
+  test("a bench whose agent is not yet live keeps its pending row for the drain", async () => {
     const liveWorkflow = DEFAULT_WORKFLOWS[0];
     if (liveWorkflow === undefined) {
       throw new Error("DEFAULT_WORKFLOWS is empty");
@@ -653,10 +659,9 @@ describe("POST /complete-setup", () => {
         })),
       ),
     );
-    // Only the first workflow made it live; the rest are still waiting
-    // on the drain.
+    // The asset exists, but no deployment has gone live yet.
     hub.get(`/api/tenants/${TENANT_ID}/workflows/deployments`, (c) =>
-      c.json([{ definitionAssetId: "ast_0", status: "deployed" }]),
+      c.json([]),
     );
     const server = Bun.serve({ port: 0, fetch: hub.fetch });
     const pendingSeedStore = createInMemoryPendingSeedStore(testCipher());
@@ -691,11 +696,9 @@ describe("POST /complete-setup", () => {
         kind: "provisioning",
         tenantId: TENANT_ID,
         tenantSlug: TENANT_SLUG,
-        // The one live workflow here IS the setup agent — she deploys
-        // first (CL-6462), so this bench is already chat-ready.
-        setupAgentReady: true,
-        deployed: [liveWorkflow.assetName],
-        pending: DEFAULT_WORKFLOWS.slice(1).map((w) => w.assetName),
+        setupAgentReady: false,
+        deployed: [],
+        pending: [liveWorkflow.assetName],
       });
 
       // Not finished yet — clearing the row here would strand the

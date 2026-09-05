@@ -4,12 +4,16 @@
 // There's no capability listing to read this off of, so this probes the
 // one grant-checked route that requires no grant of its own —
 // `evaluate` — for the resource each section is built on.
+// A 200 whose effect is not `allow` is an authenticated deny. A thrown
+// probe (network, 5xx) is `error`, never `denied` — collapsing those
+// together made the gated nav vanish as if the principal were
+// unauthorized (CL-6829).
 
 import { useEffect, useState } from "react";
 
 import { evaluate } from "./tenancy-api";
 
-export type SectionAccess = "loading" | "allowed" | "denied";
+export type SectionAccess = "loading" | "allowed" | "denied" | "error";
 
 export type TenancyAccess = {
   readonly people: SectionAccess;
@@ -17,6 +21,35 @@ export type TenancyAccess = {
   readonly grants: SectionAccess;
   readonly credentials: SectionAccess;
 };
+
+/** Maps one evaluate call to a nav gate. Catch is `error`, not `denied`. */
+export async function probeSectionAccess(
+  tenantId: string,
+  principalId: string,
+  resource: string,
+): Promise<SectionAccess> {
+  try {
+    const result = await evaluate(tenantId, principalId, resource, "read");
+    return result.effect === "allow" ? "allowed" : "denied";
+  } catch {
+    // report-error-ignore: CL-6829 — a failed evaluate probe is the
+    // `error` nav state, not an unexpected exception to report.
+    return "error";
+  }
+}
+
+/** A failed probe must not clobber a prior allow/deny — only an unresolved
+ *  gate becomes `error`. That keeps last-known nav and avoids flashing
+ *  gated sections that a later successful deny would hide. */
+export function coalesceSectionAccess(
+  previous: SectionAccess,
+  next: SectionAccess,
+): SectionAccess {
+  if (next === "error" && (previous === "allowed" || previous === "denied")) {
+    return previous;
+  }
+  return next;
+}
 
 function useResourceAccess(
   tenantId: string | null,
@@ -32,14 +65,9 @@ function useResourceAccess(
     }
     let cancelled = false;
     setAccess("loading");
-    evaluate(tenantId, principalId, resource, "read")
-      .then((result) => {
-        if (!cancelled)
-          setAccess(result.effect === "allow" ? "allowed" : "denied");
-      })
-      .catch(() => {
-        if (!cancelled) setAccess("denied");
-      });
+    void probeSectionAccess(tenantId, principalId, resource).then((next) => {
+      if (!cancelled) setAccess(next);
+    });
     return () => {
       cancelled = true;
     };
@@ -49,8 +77,10 @@ function useResourceAccess(
 }
 
 /** One probe per section, run in parallel — a section stays out of the nav
- * until its probe resolves `allowed`, so a slow or failed probe reads as
- * "not shown yet", never as a visible-but-disabled tab. */
+ * until its probe resolves `allowed`, so a slow probe reads as "not shown
+ * yet", never as a visible-but-disabled tab. A failed probe is `error`,
+ * not `denied`: the registry withholds the section but marks the group so
+ * a host can show a couldn't-check state instead of looking unauthorized. */
 export function useTenancyAccess(
   tenantId: string | null,
   principalId: string | null,

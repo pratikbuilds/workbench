@@ -70,6 +70,14 @@ function stubFetch(options: {
   readonly catalogModels?: readonly (ModelFixture & {
     readonly offerings: readonly OfferingFixture[];
   })[];
+  /** When true, every catalog (`/models`) read fails. */
+  readonly catalogFails?: boolean;
+  /** HTTP status for a failing catalog read (default 500). */
+  readonly catalogFailStatus?: number;
+  /** When true, a failing catalog read throws (network), not an HTTP envelope. */
+  readonly catalogNetworkFails?: boolean;
+  /** Fail the first N catalog reads, then succeed — used to exercise Retry. */
+  readonly catalogFailUntil?: number;
   readonly addCapabilityFails?: boolean;
   readonly restoreFails?: boolean;
   readonly onSave?: (
@@ -100,6 +108,7 @@ function stubFetch(options: {
       offerings: [{ providerName: "anthropic" }],
     },
   ];
+  let catalogCalls = 0;
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = typeof input === "string" ? input : String(input);
@@ -127,6 +136,29 @@ function stubFetch(options: {
       return json({ settings: {}, contextWindow: 20 });
     }
     if (/\/models$/.test(path)) {
+      catalogCalls += 1;
+      const catalogShouldFail =
+        options.catalogFails === true ||
+        options.catalogNetworkFails === true ||
+        options.catalogFailStatus !== undefined ||
+        (options.catalogFailUntil !== undefined &&
+          catalogCalls <= options.catalogFailUntil);
+      if (catalogShouldFail) {
+        if (options.catalogNetworkFails === true) {
+          throw new TypeError("Failed to fetch");
+        }
+        const status = options.catalogFailStatus ?? 500;
+        return json(
+          {
+            error: {
+              code: status === 401 ? "unauthenticated" : "internal",
+              userMessage: status === 401 ? "signed out boom" : "catalog boom",
+              refId: "ref_catalog",
+            },
+          },
+          status,
+        );
+      }
       return json(
         catalogModels.map((model, index) => ({
           id: `model_${String(index)}`,
@@ -158,6 +190,7 @@ function stubFetch(options: {
           handle: agent.handle,
           definitionId: agent.definitionId,
           definitionAssetId: `ast_${agent.definitionId}`,
+          displayName: agent.name,
         })),
       });
     }
@@ -858,6 +891,93 @@ describe("Agents section — Model select (CL-6272.3)", () => {
 
     expect(modelSelect(el)?.value).toBe("");
     expect(modelSelect(el)?.options[0]?.textContent).toBe("No model set");
+  });
+
+  test("a catalog load failure reads as an error, not an empty picker (CL-6831)", async () => {
+    stubFetch({ catalogFails: true });
+    const el = mount(baseProps());
+    await settle();
+    openAgent(el, "myra");
+    await settle();
+
+    const select = modelSelect(el);
+    expect(select?.disabled).toBe(true);
+
+    const alert = el.querySelector(".chat-dialog-error")?.textContent;
+    expect(alert).toBe("catalog boom");
+    expect(alert).not.toBe("Couldn't load the models.");
+    expect(el.textContent).not.toContain(
+      "No connected providers yet — connect one in Shared Settings.",
+    );
+    expect(el.textContent).not.toContain("No connected providers yet");
+
+    expect(findButton(el, "Retry")).toBeDefined();
+    const settingsHop = el.querySelector(
+      'a[href="/settings/connections"]',
+    ) as HTMLAnchorElement | null;
+    expect(settingsHop).not.toBeNull();
+    expect(settingsHop?.textContent).toBe("Shared Settings");
+  });
+
+  test("a catalog 401 reads as signed-out copy, not the envelope or generic fallback", async () => {
+    stubFetch({ catalogFailStatus: 401 });
+    const el = mount(baseProps());
+    await settle();
+    openAgent(el, "myra");
+    await settle();
+
+    const alert = el.querySelector(".chat-dialog-error")?.textContent;
+    expect(alert).toBe("You're signed out. Sign in again to continue.");
+    expect(alert).not.toBe("signed out boom");
+    expect(alert).not.toBe("Couldn't load the models.");
+  });
+
+  test("a catalog network failure reads as a connection error, not the generic fallback", async () => {
+    stubFetch({ catalogNetworkFails: true });
+    const el = mount(baseProps());
+    await settle();
+    openAgent(el, "myra");
+    await settle();
+
+    const alert = el.querySelector(".chat-dialog-error")?.textContent;
+    expect(alert).toBe(
+      "Couldn't reach the server. Check your connection and try again.",
+    );
+    expect(alert).not.toBe("Couldn't load the models.");
+  });
+
+  test("Retry after a catalog load failure recovers the picker", async () => {
+    stubFetch({
+      catalogFailUntil: 1,
+      catalogModels: [
+        {
+          canonicalName: "anthropic/claude-sonnet",
+          displayName: "Claude Sonnet",
+          offerings: [{ providerName: "anthropic" }],
+        },
+      ],
+    });
+    const el = mount(baseProps());
+    await settle();
+    openAgent(el, "myra");
+    await settle();
+
+    expect(modelSelect(el)?.disabled).toBe(true);
+    expect(el.querySelector(".chat-dialog-error")?.textContent).toBe(
+      "catalog boom",
+    );
+
+    act(() => {
+      findButton(el, "Retry")?.click();
+    });
+    await settle();
+
+    expect(el.querySelector(".chat-dialog-error")).toBeNull();
+    const select = modelSelect(el);
+    expect(select?.disabled).toBe(false);
+    expect(
+      Array.from(select?.options ?? []).map((option) => option.textContent),
+    ).toContain("Claude Sonnet · Anthropic");
   });
 });
 

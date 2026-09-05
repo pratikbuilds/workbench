@@ -64,10 +64,59 @@ describe("resolveSettingsSectionGroups", () => {
       grants: "allowed",
       credentials: "denied",
     };
-    expect(ids(resolveSettingsSectionGroups(loading))).toEqual([
+    const groups = resolveSettingsSectionGroups(loading);
+    expect(ids(groups)).toEqual([
       { id: "account", sections: ["account"] },
       { id: "everyone", sections: ["grants", "audit"] },
     ]);
+    expect(
+      groups.find((group) => group.id === "everyone")?.accessProbeFailed,
+    ).toBe(undefined);
+  });
+
+  test("a probe error withholds gated sections but is not an authenticated deny", () => {
+    const errored: TenancyAccess = {
+      people: "error",
+      roles: "error",
+      grants: "error",
+      credentials: "error",
+    };
+    const groups = resolveSettingsSectionGroups(errored);
+    expect(ids(groups)).toEqual([
+      { id: "account", sections: ["account"] },
+      { id: "everyone", sections: ["audit"] },
+    ]);
+    expect(
+      groups.find((group) => group.id === "account")?.accessProbeFailed,
+    ).toBe(undefined);
+    expect(
+      groups.find((group) => group.id === "everyone")?.accessProbeFailed,
+    ).toBe(true);
+    expect(
+      resolveSettingsSectionGroups(denied).find(
+        (group) => group.id === "everyone",
+      )?.accessProbeFailed,
+    ).toBe(undefined);
+  });
+
+  test("a mixed error withholds only the failed gate and still flags the group", () => {
+    const mixed: TenancyAccess = {
+      people: "error",
+      roles: "allowed",
+      grants: "allowed",
+      credentials: "allowed",
+    };
+    const groups = resolveSettingsSectionGroups(mixed);
+    expect(ids(groups)).toEqual([
+      { id: "account", sections: ["account"] },
+      {
+        id: "everyone",
+        sections: ["connections", "roles", "grants", "audit"],
+      },
+    ]);
+    expect(
+      groups.find((group) => group.id === "everyone")?.accessProbeFailed,
+    ).toBe(true);
   });
 
   test("Roles, Grants, and Audit are tucked under Advanced; Connections and People are not", () => {

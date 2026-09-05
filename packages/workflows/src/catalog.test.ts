@@ -324,10 +324,10 @@ describe("workflow catalog", () => {
     { key: "prompt", kind: "text", label: "Prompt", required: true },
   ];
 
-  // CL-6358: inputs bind at USE, never at creation — a routine (or a
-  // seed preset) must be creatable with a required trigger field left
-  // entirely unbound. `validateTriggerFieldsAtCreate` is the boundary
-  // check `@corbits/routines`' create route actually applies now:
+  // CL-6358: inputs bind at USE, never at creation — a scheduled
+  // definition (or a seed preset) must be creatable with a required
+  // trigger field left entirely unbound. `validateTriggerFieldsAtCreate`
+  // is the boundary check the schedule create path applies now:
   // absence of a required field is never rejected, only a value the
   // caller explicitly provided but left malformed is.
   describe("validateTriggerFieldsAtCreate", () => {

@@ -97,12 +97,20 @@ const SLACK_ENV_KEYS = [
 ] as const;
 const savedEnv = new Map(SLACK_ENV_KEYS.map((key) => [key, process.env[key]]));
 
-afterEach(() => {
+afterEach(async () => {
   for (const key of SLACK_ENV_KEYS) {
     const saved = savedEnv.get(key);
     if (saved === undefined) Reflect.deleteProperty(process.env, key);
     else process.env[key] = saved;
   }
+  // Close each test's hub as soon as its test ends rather than letting
+  // every hub booted in this file stay live (and its background loops
+  // — relaunch sweep among them — keep running) until `afterAll`. Three
+  // live hubs contending for the same Postgres connections is exactly
+  // the kind of self-inflicted race this file should not add on top of
+  // CL-7453's fix in `apps/hub/src/index.ts`.
+  let closer: (() => Promise<void>) | undefined;
+  while ((closer = closers.pop()) !== undefined) await closer();
 });
 
 async function bootHub(): Promise<Awaited<ReturnType<typeof createHub>>> {

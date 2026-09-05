@@ -7,11 +7,16 @@
 // which only works for existing accounts), role changes go through the
 // native role-assignment routes, the last owner can't be demoted, and a
 // pending invite can be cancelled.
+//
+// CL-7378: the People table's Actions cells must not inherit page-fill's
+// nowrap+ellipsis clip, or Suspend/Remove controls get truncated.
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 
 const reportErrorCalls: {
   error: unknown;
@@ -24,7 +29,7 @@ mock.module("@corbits/error-sink", () => ({
   },
 }));
 
-const { PeopleSection } = await import("../src/people-section");
+const { PeopleSection, PeopleTable } = await import("../src/people-section");
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -631,4 +636,55 @@ describe("PeopleSection", () => {
       }
     });
   }
+});
+
+function actionsCellOpenTag(markup: string): string {
+  const heads = [...markup.matchAll(/<th\b[^>]*>[\s\S]*?<\/th>/g)];
+  const index = heads.findIndex((match) => /Actions/.test(match[0]));
+  if (index === -1) throw new Error("no Actions column");
+  const firstRow = /<tbody[\s\S]*?<tr[\s\S]*?<\/tr>/.exec(markup);
+  if (firstRow === null) throw new Error("no body row");
+  const cells = [...firstRow[0].matchAll(/<td\b[^>]*>/g)];
+  const cell = cells[index];
+  if (cell === undefined) throw new Error("no Actions td");
+  return cell[0];
+}
+
+function ruleFor(css: string, className: string): string {
+  const selector = new RegExp(`\\.${className}\\s*[,{]`);
+  const block = css.split("}").find((candidate) => selector.test(candidate));
+  if (block === undefined) throw new Error(`no rule for .${className}`);
+  return block.slice(block.indexOf("{"));
+}
+
+describe("PeopleTable Actions column", () => {
+  test("Actions cells opt out of page-fill nowrap-ellipsis clipping", () => {
+    const markup = renderToStaticMarkup(
+      <PeopleTable
+        people={[humanPrincipal()]}
+        roles={[OWNER_ROLE, MEMBER_ROLE]}
+        onSuspend={() => undefined}
+        onReactivate={() => undefined}
+        onRemove={() => undefined}
+        onRoleChange={() => undefined}
+      />,
+    );
+
+    expect(actionsCellOpenTag(markup)).toContain("settings-actions-cell");
+    expect(markup).toContain("Remove");
+
+    const css = readFileSync(
+      new URL("../src/styles.css", import.meta.url),
+      "utf8",
+    );
+    const cell = ruleFor(css, "settings-actions-cell");
+    expect(cell).toContain("overflow: visible");
+    expect(cell).toContain("min-width");
+    expect(cell).not.toContain("text-overflow: ellipsis");
+    expect(cell).not.toContain("white-space: nowrap");
+    expect(cell).not.toContain("overflow: hidden");
+
+    const actions = ruleFor(css, "settings-row-actions");
+    expect(actions).toContain("min-width");
+  });
 });

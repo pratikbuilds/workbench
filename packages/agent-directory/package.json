@@ -18,6 +18,7 @@
     "@corbits/error-sink": "workspace:*",
     "@corbits/folded-run-one-shot": "workspace:*",
     "@corbits/skills": "workspace:*",
+    "@corbits/tool-registry-publish": "workspace:*",
     "@workbench/templates": "workspace:*",
     "@corbits/workflows": "workspace:*",
     "@intx/agent": "workspace:*",
@@ -29,14 +30,15 @@
     "@intx/workflow": "workspace:*",
     "arktype": "catalog:",
     "drizzle-orm": "catalog:",
-    "hono": "^4.11.9",
+    "hono": "catalog:",
     "isomorphic-git": "catalog:",
-    "postgres": "catalog:"
+    "postgres": "catalog:",
+    "semver": "catalog:"
   },
   "devDependencies": {
-    "@corbits/tool-registry-publish": "workspace:*",
     "@intx/crypto": "0.3.0",
     "@types/bun": "catalog:",
+    "@types/semver": "catalog:",
     "typescript": "catalog:"
   }
 }

@@ -1,22 +1,20 @@
-// Smoke scenario 5/5 (CL-6004): webhook trigger. A routine is bound to
+// Smoke scenario 5/5 (CL-6004): webhook trigger. A workflow is bound to
 // a `@corbits/webhook-triggers` row instead of a cadence; a correctly
 // HMAC-signed payload delivered to the public ingress route launches a
-// run. Zero-cost like `routine-repeat.test.ts`: the deployed workflow's
-// only inference source is the hub's own noop-inference endpoint, so
-// nothing here ever calls a real model provider.
+// run. Zero-cost like `scripts/e2e/workbench-digest.test.ts`: the
+// deployed workflow's only inference source is the hub's own
+// noop-inference endpoint, so nothing here ever calls a real model
+// provider.
 //
-// A webhook-fired run never anchors to the routine's own run store
-// (`launchWebhookTrigger` launches a standalone folded run via
-// `@corbits/folded-runs`, bypassing the routine launcher entirely — see
-// `packages/webhook-triggers/src/launch.ts`), so it cannot be observed
-// through `GET /routines/:id/runs` the way `routine-repeat.test.ts`
-// observes a "run now" fire. There is also no platform route that reads
-// an arbitrary non-anchored run's events by bare id (the native events
-// route requires a deployment-anchor run). This test instead reads the
-// run row the ingress delivery created straight out of the database —
-// a harness-side fact with no route, exactly as `provisionSidecar`
-// already does for the sidecar identity row — and confirms the trigger
-// itself recorded the delivery (`lastFiredAt`).
+// A webhook-fired run launches a standalone folded run via
+// `@corbits/folded-runs` (see `packages/webhook-triggers/src/launch.ts`).
+// There is no platform route that reads an arbitrary non-anchored run's
+// events by bare id (the native events route requires a deployment-anchor
+// run). This test instead reads the run row the ingress delivery created
+// straight out of the database — a harness-side fact with no route,
+// exactly as `provisionSidecar` already does for the sidecar identity
+// row — and confirms the trigger itself recorded the delivery
+// (`lastFiredAt`).
 
 import {
   signPayload,
@@ -69,7 +67,7 @@ function stringField(data: unknown, field: string, what: string): string {
 }
 
 describe.skipIf(databaseUrl === undefined)("smoke: webhook trigger", () => {
-  test("a signed webhook delivery launches a run against the bound routine", async () => {
+  test("a signed webhook delivery launches a run against the bound trigger", async () => {
     const url = databaseUrl;
     if (url === undefined) throw new Error("unreachable: suite is skipped");
 
@@ -140,7 +138,7 @@ describe.skipIf(databaseUrl === undefined)("smoke: webhook trigger", () => {
 
       // The zero-cost catalog chain: an anthropic-plugin provider whose
       // base URL is the hub's own noop-inference endpoint, never a real
-      // model. Mirrors `routine-repeat.test.ts`'s noop catalog seeding.
+      // model. Mirrors `workbench-digest.test.ts`'s noop catalog seeding.
       const noopBaseUrl = `${hub.baseUrl}/api/chat/noop-inference`;
       assertNeverRealProvider(noopBaseUrl, "noop catalog provider baseURL");
       await hop("noop catalog seeding", async () => {
@@ -343,44 +341,6 @@ describe.skipIf(databaseUrl === undefined)("smoke: webhook trigger", () => {
         },
       );
 
-      const workbenchId = await hop("delivery workbench creation", async () => {
-        const res = await api(
-          hub.baseUrl,
-          "POST",
-          `/api/tenants/${tenantId}/chat/workbenches`,
-          { kind: "workbench", name: "Webhook results" },
-          cookies,
-        );
-        expectStatus("create delivery workbench", res, 201);
-        return stringField(res.data, "id", "create delivery workbench");
-      });
-
-      const routineId = await hop(
-        "routine creation bound to the webhook trigger",
-        async () => {
-          const res = await api(
-            hub.baseUrl,
-            "POST",
-            `/api/tenants/${tenantId}/routines`,
-            {
-              name: "Webhook-fired heartbeat",
-              definitionAssetId: assetId,
-              trigger: { kind: "webhook", webhookTriggerId: triggerId },
-              scope: "bench",
-              deliveryWorkbenchId: workbenchId,
-            },
-            cookies,
-          );
-          expectStatus("create routine", res, 201);
-          const data = res.data as { id: string; trigger: unknown };
-          expect(data.trigger).toEqual({
-            kind: "webhook",
-            webhookTriggerId: triggerId,
-          });
-          return data.id;
-        },
-      );
-
       const instanceId = await hop(
         "a correctly signed delivery is accepted and launches a run",
         async () => {
@@ -426,23 +386,6 @@ describe.skipIf(databaseUrl === undefined)("smoke: webhook trigger", () => {
           body: rawBody,
         });
         expect(res.status).toBe(401);
-      });
-
-      await hop("the routine still carries its webhook binding", async () => {
-        const res = await api(
-          hub.baseUrl,
-          "GET",
-          `/api/tenants/${tenantId}/routines/${routineId}`,
-          undefined,
-          cookies,
-        );
-        expectStatus("get routine", res, 200);
-        const data = res.data as { id: string; trigger: unknown };
-        expect(data.id).toBe(routineId);
-        expect(data.trigger).toEqual({
-          kind: "webhook",
-          webhookTriggerId: triggerId,
-        });
       });
 
       await hop(
@@ -556,7 +499,7 @@ describe.skipIf(databaseUrl === undefined)("smoke: webhook trigger", () => {
 
       console.log(
         "smoke-webhook: a signed delivery to the public ingress route " +
-          "launched a real run row for a routine bound to a webhook trigger, " +
+          "launched a real run row for a webhook trigger, " +
           "and its insights trace reads back real spans (CL-5910).",
       );
     }

@@ -66,10 +66,8 @@ export const WorkflowTriggerField = type({
   key: "/^[a-zA-Z][a-zA-Z0-9]*$/",
   // Explicit, never defaulted: `"text"` renders a plain input and
   // accepts any non-empty string; `"agent"` renders a picker of
-  // taskable agent definitions (the routines create stepper reuses the
-  // task composer's own listing) and its value must resolve to a real
-  // taskable definition at create time — see
-  // `packages/routines/src/routes.ts`'s trigger-input validation.
+  // taskable agent definitions and its value must resolve to a real
+  // taskable definition at create time.
   kind: "'text' | 'agent'",
   label: "string > 0",
   "placeholder?": "string",

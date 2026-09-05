@@ -75,6 +75,7 @@ export type CreateDeployRouter = (deps: {
     agentAddress: string,
     event: InferenceEvent,
     sessionId: string | undefined,
+    childRunId?: string,
   ) => void;
   /**
    * Control-plane suspension sink the multi-step branch routes a
@@ -254,6 +255,7 @@ export function createSidecarOrchestrator(
     agentAddress: string,
     sessionId: string,
     event: InferenceEvent,
+    childRunId?: string,
   ) => void = () => {
     /* replaced after HubLink construction */
   };
@@ -286,7 +288,7 @@ export function createSidecarOrchestrator(
     // is observed. A sessionless event is dropped rather than guessed
     // onto an arbitrary session -- the hub timeline is session-keyed and
     // a forged session id would mis-route the event.
-    publishWorkflowInferenceEvent: (agentAddress, event, sessionId) => {
+    publishWorkflowInferenceEvent: (agentAddress, event, sessionId, childRunId) => {
       if (sessionId === undefined) {
         log.warn(
           "Dropping workflow inference event for {agentAddress}: deploy carried no sessionId",
@@ -294,7 +296,7 @@ export function createSidecarOrchestrator(
         );
         return;
       }
-      dispatchEvent(agentAddress, sessionId, event);
+      dispatchEvent(agentAddress, sessionId, event, childRunId);
     },
     // Route a supervisor's suspension registration up the hub-link so the
     // hub co-writes the parked run's routing + approval rows.

@@ -350,6 +350,33 @@ describe("LibraryPage top-nav action placement", () => {
     );
   });
 
+  test("the files scope control stays in the document below the lg breakpoint", () => {
+    act(() => {
+      root.render(
+        <LibraryPage
+          artifacts={artifacts}
+          workbenchScope={{ title: "Launch plan" }}
+          scope="all"
+          onScopeChange={() => undefined}
+        />,
+      );
+    });
+    const topBarActions = container.querySelector(
+      '[data-testid="stage-top-bar-actions"]',
+    );
+    const scopeControls = [
+      ...(topBarActions?.querySelectorAll('[aria-label="Files scope"]') ?? []),
+    ];
+    expect(scopeControls.length).toBeGreaterThan(0);
+    // `hidden` is display:none. A Files-scope control that only exists
+    // behind `hidden lg:flex` vanishes below 1024px with no way to reach
+    // All workbenches. At least one control must stay in the tree without
+    // that class — the overflow menu in this bar, or the group itself.
+    expect(
+      scopeControls.some((el) => !el.className.split(/\s+/).includes("hidden")),
+    ).toBe(true);
+  });
+
   test("the file detail pane fills the available height", () => {
     act(() => {
       root.render(

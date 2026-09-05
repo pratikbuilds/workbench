@@ -50,24 +50,6 @@ function mount(): { container: HTMLDivElement; root: Root } {
 describe("GranolaWebhookCard Manage dialog (already connected)", () => {
   test("shows the hook URL and an invalidation warning without clicking Rotate", async () => {
     globalThis.fetch = (async (url: string) => {
-      if (url === "/api/tenants/ten_1/routines") {
-        return json(200, {
-          items: [
-            {
-              id: "rt_1",
-              name: "Granola calls",
-              definitionId: "def_1",
-              trigger: { kind: "webhook", webhookTriggerId: "wht_1" },
-              scope: "bench",
-              input: {},
-              enabled: true,
-              deliveryWorkbenchId: null,
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          ],
-        });
-      }
       if (url.startsWith("/api/tenants/ten_1/workflows/definitions")) {
         return json(200, {
           data: [{ id: "def_1", name: "granola-call", status: "active" }],

@@ -106,4 +106,29 @@ describe("createChatConnectServiceActions with a token preset", () => {
       kind: "connected",
     });
   });
+
+  test("notifySettingsChanged re-reads subscribed connectors and fans listeners", async () => {
+    let listed = PRESET_LIST;
+    stubFetch(() => new Response(JSON.stringify(listed)));
+    const actions = createChatConnectServiceActions("tnt_1", "/bench");
+    const received: unknown[] = [];
+    const unsubscribe = actions.subscribeConnectState("github-mcp", (query) => {
+      received.push(query);
+    });
+
+    expect(await actions.getConnectState("github-mcp")).toEqual({
+      kind: "disconnected",
+      affordance: "api-key",
+      docsUrl: "https://github.com/settings/tokens",
+    });
+    expect(received).toEqual([]);
+
+    listed = {
+      data: PRESET_LIST.data.map((entry) => ({ ...entry, connected: true })),
+    };
+    await actions.notifySettingsChanged();
+
+    expect(received).toEqual([{ kind: "connected" }]);
+    unsubscribe();
+  });
 });

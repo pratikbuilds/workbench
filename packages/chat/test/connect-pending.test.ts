@@ -309,6 +309,91 @@ test("settles a room whose GitHub card is pending under the code-review template
   expect(turns).toHaveLength(0);
 });
 
+test("a code-review template room never wakes an agent when GitHub connects — even if connections/pending also names it", async () => {
+  const { store, roomMessages, platform, agentTurns, deps } = buildDeps();
+  await store.createWorkbenchSettings({
+    tenantId: TENANT.id,
+    workbenchId: "chan_review",
+    settings: {
+      "chat/kind": "workbench",
+      "chat/participants": [
+        { address: HUMAN_ADDRESS, handle: "owner" },
+        {
+          address: "ins_architecture-reviewer@acme.example",
+          handle: "architecture-reviewer",
+        },
+        {
+          address: "ins_correctness-reviewer@acme.example",
+          handle: "correctness-reviewer",
+        },
+      ],
+      "template/id": "code-review",
+      "connections/pending": ["github"],
+      "template/pendingConnections": ["github"],
+    },
+    updatedBy: "prn_owner",
+  });
+
+  await settleConnectedService(deps, {
+    tenantId: TENANT.id,
+    principalId: "prn_owner",
+    connectorId: "github",
+    displayName: "GitHub",
+  });
+
+  const settled = await store.getWorkbenchSettings(TENANT.id, "chan_review");
+  expect(settled?.settings["connections/pending"]).toEqual([]);
+  expect(settled?.settings["template/pendingConnections"]).toEqual([]);
+
+  const listed = await roomMessages.listMessages({
+    tenantId: TENANT.id,
+    workbenchId: "chan_review",
+  });
+  expectEventOnlySettleNotice(listed.items, "GitHub");
+  expect(listed.items[0]?.sender.address).toBe("system@chan_review");
+  expect(platform.sentMail).toHaveLength(0);
+  const turns = await agentTurns.listTurns({
+    tenantId: TENANT.id,
+    workbenchId: "chan_review",
+  });
+  expect(turns).toHaveLength(0);
+});
+
+test("a code-review room that only has connections/pending for GitHub still does not dispatch a reviewer", async () => {
+  const { store, platform, agentTurns, deps } = buildDeps();
+  await store.createWorkbenchSettings({
+    tenantId: TENANT.id,
+    workbenchId: "chan_review_pending",
+    settings: {
+      "chat/kind": "workbench",
+      "chat/participants": [
+        { address: HUMAN_ADDRESS, handle: "owner" },
+        {
+          address: "ins_architecture-reviewer@acme.example",
+          handle: "architecture-reviewer",
+        },
+      ],
+      "template/id": "code-review",
+      "connections/pending": ["github"],
+    },
+    updatedBy: "prn_owner",
+  });
+
+  await settleConnectedService(deps, {
+    tenantId: TENANT.id,
+    principalId: "prn_owner",
+    connectorId: "github",
+    displayName: "GitHub",
+  });
+
+  expect(platform.sentMail).toHaveLength(0);
+  const turns = await agentTurns.listTurns({
+    tenantId: TENANT.id,
+    workbenchId: "chan_review_pending",
+  });
+  expect(turns).toHaveLength(0);
+});
+
 test("a room pending under both keys still wakes its host agent", async () => {
   const { store, roomMessages, platform, agentTurns, deps } = buildDeps();
   await store.createWorkbenchSettings({

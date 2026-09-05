@@ -23,7 +23,21 @@
 // exercised without a real Postgres.
 
 import { describe, expect, mock, test } from "bun:test";
-import type { FoldedRunsDeps } from "@corbits/folded-runs";
+import { IDLE_HIBERNATE_UNDEPLOY_REASON } from "@corbits/agent-lifecycle";
+import { AGENT_RUNTIME_SECTION_ID } from "@corbits/agent-runtime";
+import {
+  createCryptoProviderCache,
+  foldedRun,
+  inferenceSourcesDigest,
+  DefinitionProjectionMissingError,
+  type CryptoProviderCache,
+  type FoldedRunsDeps,
+} from "@corbits/folded-runs";
+import {
+  parseWorkflowSourceEntry,
+  WORKFLOW_SOURCE_ENTRY_PATH,
+} from "@corbits/workflows";
+import type { DefinitionSourceResolution } from "@intx/hub-api";
 import {
   agentSession,
   asset,
@@ -33,21 +47,10 @@ import {
   workflowDefinitionVersion,
   workflowRun,
 } from "@intx/db/schema";
-import { workbenchLaunch } from "../src/schema";
-import {
-  foldedRun,
-  inferenceSourcesDigest,
-  DefinitionProjectionMissingError,
-} from "@corbits/folded-runs";
-import { IDLE_HIBERNATE_UNDEPLOY_REASON } from "@corbits/agent-lifecycle";
-import { AGENT_RUNTIME_SECTION_ID } from "@corbits/agent-runtime";
-import {
-  parseWorkflowSourceEntry,
-  WORKFLOW_SOURCE_ENTRY_PATH,
-} from "@corbits/workflows";
 import { SessionLaunchError } from "@intx/hub-sessions";
 import type { EventCollectorRegistry, SidecarRouter } from "@intx/hub-sessions";
-import type { DefinitionSourceResolution } from "@intx/hub-api";
+import { workbenchLaunch } from "../src/schema";
+import type { CreateHubChatPlatformDeps } from "../src/platform-adapter";
 import { MODEL_UNAVAILABLE_CONSUMER_MESSAGE } from "../src/model-unavailable";
 
 const actualHubApi = await import("@intx/hub-api");
@@ -103,7 +106,40 @@ mock.module("@intx/db", () => ({
   listVisibleOfferings: async () => [],
 }));
 
-const { createHubChatPlatform } = await import("../src/platform-adapter");
+const { createHubChatPlatform: buildHubChatPlatform } =
+  await import("../src/platform-adapter");
+
+function createHubChatPlatform(
+  deps: Omit<CreateHubChatPlatformDeps, "cryptoProviders"> & {
+    cryptoProviders?: CryptoProviderCache;
+  },
+) {
+  return buildHubChatPlatform({
+    ...deps,
+    cryptoProviders: deps.cryptoProviders ?? createCryptoProviderCache(),
+  });
+}
+
+const PASSTHROUGH_CIPHER = {
+  encrypt: async (plaintext: string) => plaintext,
+  decrypt: async (blob: string) => blob,
+};
+
+function createPlatform(
+  deps: Omit<
+    Parameters<typeof createHubChatPlatform>[0],
+    "credentialCipher"
+  > & {
+    credentialCipher?: Parameters<
+      typeof createHubChatPlatform
+    >[0]["credentialCipher"];
+  },
+) {
+  return createHubChatPlatform({
+    ...deps,
+    credentialCipher: deps.credentialCipher ?? PASSTHROUGH_CIPHER,
+  });
+}
 
 type SelectChain = PromiseLike<unknown[]> & {
   where(...args: unknown[]): SelectChain;
@@ -806,7 +842,7 @@ describe("createHubChatPlatform", () => {
     const sidecarRouter = createFakeSidecarRouter({ routableAddresses: [] });
     const eventCollectors = createFakeEventCollectors();
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -884,7 +920,7 @@ describe("createHubChatPlatform", () => {
     const sidecarRouter = createFakeSidecarRouter({ routableAddresses: [] });
     const eventCollectors = createFakeEventCollectors();
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -950,7 +986,7 @@ describe("createHubChatPlatform", () => {
     const sessionService = createFakeSessionService();
     const sidecarRouter = createFakeSidecarRouter();
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -989,6 +1025,76 @@ describe("createHubChatPlatform", () => {
     expect(sidecarRouter.dispatchAgentEventCalls[0]?.address).toBe(
       "ins_workbench1@ten1.workbench.test",
     );
+  });
+
+  test("sendMail signs with the injected crypto cache keyed by workbenchId", async () => {
+    resolveDefinitionSourcesResult = {
+      ok: true,
+      sources: [
+        {
+          id: "off_1",
+          provider: "anthropic",
+          baseURL: "https://inference.invalid",
+          apiKey: "placeholder",
+          model: "claude-sonnet-5",
+        },
+      ],
+      defaultSource: "off_1",
+    };
+
+    const db = createFakeDb({
+      assetRow: {
+        tenantId: "ten_1",
+        creatorPrincipalId: "prin_creator",
+        name: "workbench-1",
+        displayName: null,
+      },
+      definitionId: "wfd_workbench1",
+      workflowRunRow: {
+        id: "ins_workbench1",
+        address: "ins_workbench1@ten1.workbench.test",
+        principalId: "prin_run1",
+      },
+    });
+    db.inserted.push({
+      table: agentSession,
+      values: { id: "ses_run1", principalId: "prin_run1" },
+    });
+
+    const sessionService = createFakeSessionService();
+    const getKeys: string[] = [];
+    const injectedProvider = {
+      getPublicKey: () => new Uint8Array([7, 2, 8, 4]),
+    };
+    const cryptoProviders: CryptoProviderCache = {
+      get: async (key) => {
+        getKeys.push(key);
+        return injectedProvider as never;
+      },
+    };
+
+    const platform = createPlatform({
+      toolGrantsForPins: () => [],
+      db: db as never,
+      sessionService,
+      assetService: createFakeAssetService(),
+      sidecarRouter: createFakeSidecarRouter(),
+      eventCollectors: createFakeEventCollectors(),
+      cryptoProviders,
+    });
+
+    await platform.sendMail({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      principalId: "prin_sender",
+      content: { content: "hello workbench" },
+    });
+
+    expect(getKeys).toEqual(["ins_workbench1"]);
+    const call = sessionService.sendUserMessageCalls[0] as {
+      cryptoProvider: unknown;
+    };
+    expect(call.cryptoProvider).toBe(injectedProvider);
   });
 
   test("sendMail rejects within the mail-delivery deadline instead of hanging forever when delivery never settles (CL-6644)", async () => {
@@ -1035,7 +1141,7 @@ describe("createHubChatPlatform", () => {
     sessionService.sendUserMessage = () => new Promise<never>(() => {});
     const sidecarRouter = createFakeSidecarRouter();
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -1096,7 +1202,7 @@ describe("createHubChatPlatform", () => {
     const sidecarRouter = createFakeSidecarRouter({ routableAddresses: [] });
     const eventCollectors = createFakeEventCollectors();
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -1173,7 +1279,7 @@ describe("createHubChatPlatform", () => {
         wfd_echo: inertProjection({ id: "wfd_echo" }),
       },
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1263,7 +1369,7 @@ describe("createHubChatPlatform", () => {
       decrypt: async (blob: string) => blob,
     };
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -1287,6 +1393,63 @@ describe("createHubChatPlatform", () => {
     });
   });
 
+  test("refuses to mint FoldedRunsDeps when credentialCipher is missing", () => {
+    expect(() =>
+      createHubChatPlatform({
+        toolGrantsForPins: () => [],
+        db: {} as never,
+        sessionService: {} as never,
+        assetService: {} as never,
+        sidecarRouter: {} as never,
+        eventCollectors: createFakeEventCollectors(),
+        credentialCipher: undefined as never,
+      }),
+    ).toThrow(/missing or has the wrong shape/);
+  });
+
+  test("refuses to mint FoldedRunsDeps when credentialCipher has the wrong shape", () => {
+    expect(() =>
+      createHubChatPlatform({
+        toolGrantsForPins: () => [],
+        db: {} as never,
+        sessionService: {} as never,
+        assetService: {} as never,
+        sidecarRouter: {} as never,
+        eventCollectors: createFakeEventCollectors(),
+        credentialCipher: {} as never,
+      }),
+    ).toThrow(/missing or has the wrong shape/);
+  });
+
+  // A mismatched cipher (right keys, wrong value types) must fail closed at
+  // tag construction — launchInvite never starts, so ciphertext cannot reach
+  // a provider as an API key.
+  test("mismatched credentialCipher fails loudly before launchInvite", async () => {
+    resolveDefinitionSourcesCalls.length = 0;
+    await expect(
+      (async () => {
+        const platform = createHubChatPlatform({
+          toolGrantsForPins: () => [],
+          db: {} as never,
+          sessionService: {} as never,
+          assetService: {} as never,
+          sidecarRouter: {} as never,
+          eventCollectors: createFakeEventCollectors(),
+          credentialCipher: {
+            encrypt: async () => "",
+            decrypt: "not-a-function",
+          } as never,
+        });
+        return platform.launchInvite({
+          tenantId: "ten_1",
+          creatorPrincipalId: "prin_creator",
+          definitionId: "wfd_echo",
+        });
+      })(),
+    ).rejects.toThrow(/missing or has the wrong shape/);
+    expect(resolveDefinitionSourcesCalls).toHaveLength(0);
+  });
+
   test("launchInvite fails loud when the definition is not deployed", async () => {
     const db = createFakeDb({
       assetRow: {
@@ -1304,7 +1467,7 @@ describe("createHubChatPlatform", () => {
       },
       tenantRow: { id: "ten_1", domain: "ten1.workbench.test" },
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1357,7 +1520,7 @@ describe("createHubChatPlatform", () => {
       // projection, and there is no other sibling to fall back to.
     });
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1430,7 +1593,7 @@ describe("createHubChatPlatform", () => {
       },
     });
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1501,7 +1664,7 @@ describe("createHubChatPlatform", () => {
       },
     });
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1531,7 +1694,7 @@ describe("createHubChatPlatform", () => {
       workflowDefinitionRow: undefined,
       tenantRow: { id: "ten_1", domain: "ten1.workbench.test" },
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1579,7 +1742,7 @@ describe("createHubChatPlatform", () => {
         wfd_echo: inertProjection({ id: "wfd_echo" }),
       },
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1645,7 +1808,7 @@ describe("createHubChatPlatform", () => {
       tenantRow: { id: "ten_1", domain: "ten1.workbench.test" },
       wireProjectionsByDefinitionId: { wfd_echo: NO_MODEL_PROJECTION },
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1699,7 +1862,7 @@ describe("createHubChatPlatform", () => {
       tenantRow: { id: "ten_1", domain: "ten1.workbench.test" },
       wireProjectionsByDefinitionId: { wfd_echo: NO_MODEL_PROJECTION },
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1759,7 +1922,7 @@ describe("createHubChatPlatform", () => {
         },
       ],
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -1793,7 +1956,7 @@ describe("createHubChatPlatform", () => {
     const assetService = createFakeAssetService();
     const sidecarRouter = createFakeSidecarRouter();
 
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -1892,7 +2055,7 @@ describe("createHubChatPlatform", () => {
         assetBlob: new TextEncoder().encode(WORKBENCH_WORKFLOW_JSON),
       });
 
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService,
@@ -1988,7 +2151,7 @@ describe("createHubChatPlatform", () => {
         assetBlob: new TextEncoder().encode(WORKBENCH_WORKFLOW_JSON),
       });
 
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService,
@@ -2054,7 +2217,7 @@ describe("createHubChatPlatform", () => {
         busyAddresses: new Set([address]),
       });
 
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService: createFakeSessionService(),
@@ -2119,7 +2282,7 @@ describe("createHubChatPlatform", () => {
         busyAddresses: new Set(),
       });
 
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService: createFakeSessionService(),
@@ -2186,7 +2349,7 @@ describe("createHubChatPlatform", () => {
         busyAddresses: new Set(),
       });
 
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService: createFakeSessionService(),
@@ -2230,7 +2393,7 @@ describe("createHubChatPlatform", () => {
           },
           definitionId: "wfd_workbench1",
         });
-        createHubChatPlatform({
+        createPlatform({
           toolGrantsForPins: () => [],
           db: db as never,
           sessionService: createFakeSessionService(),
@@ -2264,7 +2427,7 @@ describe("createHubChatPlatform", () => {
           },
           definitionId: "wfd_workbench1",
         });
-        createHubChatPlatform({
+        createPlatform({
           toolGrantsForPins: () => [],
           db: db as never,
           sessionService: createFakeSessionService(),
@@ -2311,7 +2474,7 @@ describe("createHubChatPlatform", () => {
         },
       });
       const sessionService = createFakeSessionService();
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService,
@@ -2373,7 +2536,7 @@ describe("createHubChatPlatform", () => {
       });
 
       const sessionService = createFakeSessionService();
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService,
@@ -2434,7 +2597,7 @@ describe("createHubChatPlatform", () => {
       });
 
       const sessionService = createFakeSessionService();
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService,
@@ -2458,7 +2621,7 @@ describe("createHubChatPlatform", () => {
         },
         definitionId: "wfd_workbench1",
       });
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService: createFakeSessionService(),
@@ -2561,7 +2724,7 @@ describe("createHubChatPlatform", () => {
         return result;
       };
 
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService,
@@ -2663,7 +2826,7 @@ describe("createHubChatPlatform", () => {
 
     test("recomputes and persists the folded body from the definition's current projection", async () => {
       const db = buildRefreshableDb();
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService: createFakeSessionService(),
@@ -2708,7 +2871,7 @@ describe("createHubChatPlatform", () => {
         values: { id: "ses_agent1", principalId: "prin_agent1" },
       });
       const sessionService = createFakeSessionService();
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService,
@@ -2808,7 +2971,7 @@ describe("createHubChatPlatform", () => {
           wfd_agent1: NEW_PROJECTION,
         },
       });
-      const platform = createHubChatPlatform({
+      const platform = createPlatform({
         toolGrantsForPins: () => [],
         db: db as never,
         sessionService: createFakeSessionService(),
@@ -2934,7 +3097,7 @@ describe("createHubChatPlatform stale-definition reconciliation", () => {
     const sidecarRouter = createFakeSidecarRouter({
       routableAddresses: opts.routable ? ["run_stale@ten1.workbench.test"] : [],
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -3012,7 +3175,7 @@ describe("createHubChatPlatform stale-definition reconciliation", () => {
       values: { id: "ses_stale", principalId: "prin_room1" },
     });
     const sessionService = createFakeSessionService();
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -3099,7 +3262,7 @@ describe("createHubChatPlatform stale-definition reconciliation", () => {
         }),
       },
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -3168,7 +3331,7 @@ describe("createHubChatPlatform relaunch sweep", () => {
     const sessionService = createFakeSessionService();
     const assetService = createFakeAssetService();
     const notices: unknown[] = [];
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService,
@@ -3391,7 +3554,7 @@ describe("createHubChatPlatform inference-source rotation reconciliation", () =>
         }),
       },
     });
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -3633,7 +3796,7 @@ describe("createHubChatPlatform pinned-tool-package connect reconciliation", () 
       },
     });
     const assetService = createFakeAssetService();
-    const platform = createHubChatPlatform({
+    const platform = createPlatform({
       toolGrantsForPins: () => [],
       db: db as never,
       sessionService: createFakeSessionService(),
@@ -3642,7 +3805,6 @@ describe("createHubChatPlatform pinned-tool-package connect reconciliation", () 
         routableAddresses: ["run_live@ten1.workbench.test"],
       }),
       eventCollectors: createFakeEventCollectors(),
-      credentialCipher: {} as never,
       pinnedPackageCredentialBindingsFor: async () => [MANUS_BINDING],
     });
     return { db, platform, assetService };

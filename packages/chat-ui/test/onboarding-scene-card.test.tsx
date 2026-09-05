@@ -105,6 +105,7 @@ function fixedStateActions(state: ConnectGithubQuery): ConnectGithubActions {
   return {
     getConnectState: () => Promise.resolve(state),
     subscribeConnectState: () => () => undefined,
+    notifySettingsChanged: () => Promise.resolve(),
     requestConnect: () => undefined,
     submitAccessToken: () => Promise.resolve({ ok: true as const }),
     startReviewing: () => Promise.resolve({ startedTriggerCount: 0 }),

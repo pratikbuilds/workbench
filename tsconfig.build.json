@@ -122,6 +122,9 @@
       "path": "./packages/presence/tsconfig.src.json"
     },
     {
+      "path": "./packages/process-provisioner/tsconfig.src.json"
+    },
+    {
       "path": "./packages/reddit-tools/tsconfig.src.json"
     },
     {

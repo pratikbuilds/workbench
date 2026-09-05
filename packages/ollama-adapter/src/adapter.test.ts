@@ -74,7 +74,9 @@ describe("createOllamaAdapter", () => {
     const inner = createOpenAIAdapter(source);
     const wrappedBuilt = wrapped.buildRequest(messages, "gpt-oss:20b", options);
     const innerBuilt = inner.buildRequest(messages, "gpt-oss:20b", options);
-    expect(bodyOf(wrappedBuilt)).toEqual(bodyOf(innerBuilt));
+    const wrappedBody = bodyOf(wrappedBuilt);
+    const { stream_options: _streamOptions, ...rest } = wrappedBody;
+    expect(rest).toEqual(bodyOf(innerBuilt));
     expect(wrappedBuilt.url).toBe(innerBuilt.url);
     expect(wrappedBuilt.headers).toEqual(innerBuilt.headers);
   });
@@ -178,6 +180,59 @@ describe("createOllamaAdapter", () => {
     expectSharedToolCallId(events);
     expect(JSON.parse(argumentFragments(events))).toEqual({
       query: "this person",
+    });
+  });
+
+  test("every request asks the OpenAI-compat endpoint for a terminal usage chunk", () => {
+    const wrapped = createOllamaAdapter(source, undefined);
+    const body = bodyOf(wrapped.buildRequest(messages, "gpt-oss:20b", options));
+    expect(body["stream_options"]).toEqual({ include_usage: true });
+  });
+
+  test("parseResponse maps native prompt_eval_count/eval_count onto inference.usage", () => {
+    const wrapped = createOllamaAdapter(source, undefined);
+    const events = wrapped.parseResponse(
+      JSON.stringify({
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        prompt_eval_count: 42,
+        eval_count: 17,
+      }),
+    );
+    const usage = events.filter((event) => event.type === "inference.usage");
+    expect(usage).toHaveLength(1);
+    expect(usage[0]?.data).toEqual({
+      usage: {
+        input: 42,
+        output: 17,
+        cacheRead: 0,
+        cacheWrite: 0,
+        thinking: 0,
+      },
+      source,
+    });
+  });
+
+  test("parseResponse does not double-emit usage when the OpenAI-shaped object is already present", () => {
+    const wrapped = createOllamaAdapter(source, undefined);
+    const events = wrapped.parseResponse(
+      JSON.stringify({
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 4 },
+        prompt_eval_count: 99,
+        eval_count: 99,
+      }),
+    );
+    const usage = events.filter((event) => event.type === "inference.usage");
+    expect(usage).toHaveLength(1);
+    expect(usage[0]?.data).toEqual({
+      usage: {
+        input: 10,
+        output: 4,
+        cacheRead: 0,
+        cacheWrite: 0,
+        thinking: 0,
+      },
+      source,
     });
   });
 });

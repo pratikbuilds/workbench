@@ -13,9 +13,13 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { isAgentAddress } from "@corbits/chat/mentions";
+import { isAgentAddress, mentionedParticipants } from "@corbits/chat/mentions";
 import { reportError } from "@corbits/error-sink";
-import type { ParticipantRecord } from "./api";
+import type { Part, ParticipantRecord } from "./api";
+import {
+  displayNameForAddress,
+  type AgentDisplayNames,
+} from "./agent-display-names";
 import { displayNameFromHandle } from "./timeline";
 
 /**
@@ -455,24 +459,54 @@ export function useStreamingReply(
 
 /**
  * The handle(s) to show as "typing" in the incoming-message slot while a reply is
- * owed but no tokens have streamed yet — mirrors `mergeStreamingReply`'s
- * attribution exactly (the
- * workbench's first agent participant), since a `chat.agent` event carries no
- * sender of its own. Workbenches with more than one invited agent are the
- * same known approximation `mergeStreamingReply` already documents, not a
- * new gap: only the streaming turn's actual agent can be named once the
- * wire event carries one.
+ * owed but no tokens have streamed yet. Names the agent the latest human
+ * message addressed (`@handle`); a 1:1 with no mention still names that
+ * one agent. Two or more agents and no mention names nobody — guessing
+ * the workbench's first participant is how "Myra is typing" lied while
+ * Scout was the one asked.
  */
 export function typingAgentNames(
   streamingReply: StreamingReplyState,
   participants: readonly ParticipantRecord[],
+  parts?: readonly Part[],
+  displayNames?: AgentDisplayNames,
 ): readonly string[] {
-  // Only the tokenless awaiting phase shows the typing line; once text
-  // streams, the growing timeline bubble is the signal, and a `"replied"`
-  // turn shows nothing at all.
   if (!isPendingReply(streamingReply)) return [];
-  const agent = participants.find((participant) =>
+  const agents = participants.filter((participant) =>
     isAgentAddress(participant.address),
   );
-  return agent === undefined ? [] : [displayNameFromHandle(agent.handle)];
+  if (agents.length === 0) return [];
+
+  const addressed =
+    parts === undefined ? [] : mentionedParticipants(parts, participants);
+  const named =
+    addressed.length > 0
+      ? agents.filter((agent) => addressed.includes(agent.address))
+      : agents.length === 1
+        ? agents
+        : [];
+  return named.map(
+    (agent) =>
+      displayNameForAddress(agent.address, displayNames) ??
+      displayNameFromHandle(agent.handle),
+  );
+}
+
+/** The latest human (non-agent, non-streaming) message's parts — what
+ * `typingAgentNames` uses to see who was addressed. */
+export function lastHumanMessageParts(
+  items: readonly {
+    readonly sender: { readonly address: string };
+    readonly parts: readonly Part[];
+    readonly streaming?: boolean;
+  }[],
+): readonly Part[] | undefined {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item === undefined) continue;
+    if (item.streaming === true) continue;
+    if (isAgentAddress(item.sender.address)) continue;
+    return item.parts;
+  }
+  return undefined;
 }

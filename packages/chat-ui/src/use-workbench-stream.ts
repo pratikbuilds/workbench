@@ -6,11 +6,29 @@
 // stream emits (chat.settings, chat.typing, and the platform's own run
 // events); the caller decides what to do with each — this hook only owns
 // the transport, and connection state is never something the caller should
-// render as chrome.
+// render as chrome. JSON at this boundary is parsed with arktype
+// (`string.json.parse`); a miss is never forwarded as a raw string.
 
+import { type } from "arktype";
 import { useEffect, useRef, useState } from "react";
 
 export type WorkbenchStreamState = "connecting" | "live" | "polling";
+
+const StreamEventJson = type("string.json.parse");
+
+/**
+ * The EventSource payload is a JSON string (or absent). Parse it at this
+ * boundary so a SyntaxError never becomes a silently dropped `chat.message`.
+ */
+export function parseStreamEventJson(
+  raw: unknown,
+): { readonly ok: true; readonly data: unknown } | { readonly ok: false } {
+  if (raw === undefined) return { ok: true, data: undefined };
+  if (typeof raw !== "string") return { ok: false };
+  const parsed = StreamEventJson(raw);
+  if (parsed instanceof type.errors) return { ok: false };
+  return { ok: true, data: parsed };
+}
 
 /**
  * The S3 fix, isolated as a pure rule: with no active workbench there is
@@ -53,12 +71,15 @@ export function useWorkbenchStream(
   onEvent: (eventType: string, data: unknown) => void,
   onPoll: () => void,
   intervals?: WorkbenchStreamIntervals,
+  onParseError?: (eventType: string) => void,
 ): WorkbenchStreamState {
   const [state, setState] = useState<WorkbenchStreamState>("connecting");
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
   const onPollRef = useRef(onPoll);
   onPollRef.current = onPoll;
+  const onParseErrorRef = useRef(onParseError);
+  onParseErrorRef.current = onParseError;
   const pollMs = intervals?.pollMs ?? POLL_INTERVAL_MS;
   const baseDelayMs = intervals?.baseDelayMs ?? BASE_DELAY_MS;
   const maxDelayMs = intervals?.maxDelayMs ?? MAX_DELAY_MS;
@@ -120,14 +141,15 @@ export function useWorkbenchStream(
 
       const forward = (eventType: string) => (message: MessageEvent) => {
         if (cancelled) return;
-        try {
-          onEventRef.current(
-            eventType,
-            message.data === undefined ? undefined : JSON.parse(message.data),
-          );
-        } catch {
-          onEventRef.current(eventType, message.data);
+        const parsed = parseStreamEventJson(message.data);
+        if (!parsed.ok) {
+          onParseErrorRef.current?.(eventType);
+          if (eventType === "chat.message") {
+            onPollRef.current();
+          }
+          return;
         }
+        onEventRef.current(eventType, parsed.data);
       };
 
       // "chat.message" is every message posted into the room;

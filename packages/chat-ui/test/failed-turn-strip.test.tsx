@@ -240,8 +240,9 @@ describe("the failed-turn notice renders through PrFailedTurnStrip", () => {
 
     const detail = container.querySelector(".chat-turn-failed-detail");
     expect(detail?.textContent).toBe(
-      "This agent could not complete your request due to a credential error",
+      "This didn't go through. Try again, or check the connection in Settings.",
     );
+    expect(detail?.textContent).not.toMatch(/credential error/i);
     expect(detail?.textContent).not.toMatch(/\[HTTP/);
     expect(detail?.textContent).not.toContain("401");
     expect(detail?.textContent).not.toContain("API key is invalid");
@@ -412,6 +413,105 @@ describe("the failed-turn notice renders through PrFailedTurnStrip", () => {
           ".chat-turn-failed-settings",
         ) as HTMLButtonElement
       ).click();
+    });
+    expect(opened).toEqual(["wfd_echo"]);
+  });
+
+  test("a tools-unsupported notice shows honest copy, a tool-capable picker, and More in Settings", async () => {
+    const applied: string[] = [];
+    const retried: (string | undefined)[] = [];
+    const opened: string[] = [];
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <WorkbenchTimeline
+          items={[
+            {
+              id: "msg_ok",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              parts: [{ kind: "text", text: "hi @echo" }],
+              sender: { name: null, address: "prn_alice@agents.example" },
+            },
+            {
+              id: "msg_notice",
+              createdAt: "2026-01-01T00:00:05.000Z",
+              parts: [
+                {
+                  kind: "text",
+                  text: "This agent's model can't use tools. (ref abc)",
+                  turnFailed: true,
+                  turnFailedReason: "tools_unsupported",
+                },
+              ],
+              sender: { name: "Jimmy", address: "ins_echo1@agents.example" },
+            },
+          ]}
+          participants={[
+            { address: "ins_echo1@agents.example", handle: "echo" },
+          ]}
+          failedTurnRecovery={{
+            models: [
+              { canonicalName: "openai/gpt-4.1", label: "GPT-4.1" },
+              { canonicalName: "google/gemini-2.5-flash", label: "Flash" },
+            ],
+            toolCapableModels: [
+              { canonicalName: "anthropic/claude-sonnet", label: "Sonnet" },
+              { canonicalName: "openai/gpt-4.1", label: "GPT-4.1" },
+            ],
+            definitionIdByAddress: {
+              "ins_echo1@agents.example": "wfd_echo",
+            },
+            onApplyModel: ({ canonicalName }) => {
+              applied.push(canonicalName);
+            },
+            onOpenAgentSettings: (definitionId) => {
+              opened.push(definitionId);
+            },
+          }}
+          onRetryFailedTurn={(_item, retryText) => {
+            retried.push(retryText);
+          }}
+        />,
+      );
+    });
+
+    const strip = container.querySelector(".chat-turn-failed");
+    expect(strip?.textContent).toContain("Jimmy's model can't use tools.");
+    expect(strip?.textContent).not.toContain("didn't reply");
+    expect(strip?.textContent).not.toContain("isn't available here");
+    expect(strip?.textContent).not.toMatch(/HTTP/);
+    expect(strip?.textContent).not.toContain("function-calling");
+    expect(strip?.textContent).not.toContain("wfd_echo");
+    expect(container.querySelector(".chat-turn-failed-retry")).toBeNull();
+
+    const select = container.querySelector(
+      ".chat-turn-failed-models",
+    ) as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      "Pick a model",
+      "Sonnet",
+      "GPT-4.1",
+    ]);
+    expect(
+      [...select.options].map((option) => option.textContent),
+    ).not.toContain("Flash");
+
+    await act(async () => {
+      select.value = "anthropic/claude-sonnet";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(applied).toEqual(["anthropic/claude-sonnet"]);
+    expect(retried).toEqual(["hi @echo"]);
+
+    const settings = container.querySelector(
+      ".chat-turn-failed-settings",
+    ) as HTMLButtonElement;
+    expect(settings.textContent).toBe("More in Settings");
+    act(() => {
+      settings.click();
     });
     expect(opened).toEqual(["wfd_echo"]);
   });

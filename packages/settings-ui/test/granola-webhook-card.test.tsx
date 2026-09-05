@@ -1,7 +1,7 @@
 // The Granola webhook connector card: "Not set up" when no granola-call
-// routine has a webhook bound yet, "Connected" with a trigger count and
-// last-delivery readout once one does, and a dialog that creates/rotates
-// through the real webhook-triggers + routines routes, revealing the
+// workflow definition has a webhook trigger yet, "Connected" with a trigger
+// count and last-delivery readout once one does, and a dialog that
+// creates/rotates through the real webhook-triggers routes, revealing the
 // secret exactly once per the shell precedent.
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -57,12 +57,10 @@ function mount(): { container: HTMLDivElement; root: Root } {
 }
 
 describe("GranolaWebhookCard", () => {
-  test("reads Not set up when no granola-call routine exists", async () => {
+  test("reads Not set up when no granola-call definition exists", async () => {
     globalThis.fetch = (async (url: string) => {
-      if (url === "/api/tenants/ten_1/routines")
-        return json(200, { items: [] });
       if (url.startsWith("/api/tenants/ten_1/workflows/definitions")) {
-        return definitionsResponse([{ id: "def_1", name: "granola-call" }]);
+        return definitionsResponse([]);
       }
       if (url === "/api/tenants/ten_1/webhook-triggers") {
         return json(200, { items: [] });
@@ -84,26 +82,8 @@ describe("GranolaWebhookCard", () => {
     }
   });
 
-  test("reads Connected with a trigger count once a granola-call routine has a webhook bound", async () => {
+  test("reads Connected with a trigger count once a granola-call definition has a webhook trigger", async () => {
     globalThis.fetch = (async (url: string) => {
-      if (url === "/api/tenants/ten_1/routines") {
-        return json(200, {
-          items: [
-            {
-              id: "rt_1",
-              name: "Granola calls",
-              definitionId: "def_1",
-              trigger: { kind: "webhook", webhookTriggerId: "wht_1" },
-              scope: "bench",
-              input: {},
-              enabled: true,
-              deliveryWorkbenchId: null,
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          ],
-        });
-      }
       if (url.startsWith("/api/tenants/ten_1/workflows/definitions")) {
         return definitionsResponse([{ id: "def_1", name: "granola-call" }]);
       }
@@ -136,28 +116,9 @@ describe("GranolaWebhookCard", () => {
     }
   });
 
-  test("create flow mints a trigger, binds the routine, and reveals the secret once", async () => {
+  test("create flow mints a trigger and reveals the secret once", async () => {
     let createBody: unknown;
-    let bindBody: unknown;
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (url === "/api/tenants/ten_1/routines") {
-        return json(200, {
-          items: [
-            {
-              id: "rt_1",
-              name: "Granola calls",
-              definitionId: "def_1",
-              trigger: null,
-              scope: "bench",
-              input: {},
-              enabled: true,
-              deliveryWorkbenchId: null,
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          ],
-        });
-      }
       if (url.startsWith("/api/tenants/ten_1/workflows/definitions")) {
         return definitionsResponse([{ id: "def_1", name: "granola-call" }]);
       }
@@ -168,7 +129,7 @@ describe("GranolaWebhookCard", () => {
         createBody = JSON.parse(String(init.body));
         return json(201, {
           id: "wht_new",
-          name: "Granola calls",
+          name: "granola-call",
           workflowDefinitionId: "def_1",
           enabled: true,
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -178,24 +139,6 @@ describe("GranolaWebhookCard", () => {
       }
       if (url === "/api/tenants/ten_1/webhook-triggers") {
         return json(200, { items: [] });
-      }
-      if (
-        url === "/api/tenants/ten_1/routines/rt_1" &&
-        init?.method === "PATCH"
-      ) {
-        bindBody = JSON.parse(String(init.body));
-        return json(200, {
-          id: "rt_1",
-          name: "Granola calls",
-          definitionId: "def_1",
-          trigger: { kind: "webhook", webhookTriggerId: "wht_new" },
-          scope: "bench",
-          input: {},
-          enabled: true,
-          deliveryWorkbenchId: null,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        });
       }
       throw new Error(`unexpected fetch: ${url} ${init?.method ?? "GET"}`);
     }) as unknown as typeof fetch;
@@ -218,12 +161,9 @@ describe("GranolaWebhookCard", () => {
       await settle();
 
       expect(createBody).toEqual({
-        name: "Granola calls",
+        name: "granola-call",
         workflowDefinitionId: "def_1",
         inputTemplate: "New webhook delivery.",
-      });
-      expect(bindBody).toEqual({
-        trigger: { kind: "webhook", webhookTriggerId: "wht_new" },
       });
       expect(document.body.textContent).toContain("sec_fresh");
       expect(document.body.textContent).toContain("shown once");
@@ -236,24 +176,6 @@ describe("GranolaWebhookCard", () => {
   test("rotate flow warns before the click, reveals the new secret once, and clears on close", async () => {
     let rotateCalls = 0;
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (url === "/api/tenants/ten_1/routines") {
-        return json(200, {
-          items: [
-            {
-              id: "rt_1",
-              name: "Granola calls",
-              definitionId: "def_1",
-              trigger: { kind: "webhook", webhookTriggerId: "wht_1" },
-              scope: "bench",
-              input: {},
-              enabled: true,
-              deliveryWorkbenchId: null,
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          ],
-        });
-      }
       if (url.startsWith("/api/tenants/ten_1/workflows/definitions")) {
         return definitionsResponse([{ id: "def_1", name: "granola-call" }]);
       }

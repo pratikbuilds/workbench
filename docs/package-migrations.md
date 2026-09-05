@@ -70,7 +70,7 @@ non-transactional self-contained shape existed until CL-6017 unified every
 package onto the transactional pattern — see below):
 
 1. **Self-contained, transactional** — `@corbits/chat`, `@corbits/notify`,
-   `@corbits/webhook-triggers`, `@corbits/routines`, `@corbits/insights`,
+   `@corbits/webhook-triggers`, `@corbits/insights`,
    `@corbits/skills`, `@corbits/bench`, `@corbits/preferences`,
    `@corbits/inference-catalog`, `@corbits/evals`, `@corbits/access-policy`,
    `@corbits/workflows`'s `./deploy-source`.
@@ -98,17 +98,17 @@ package onto the transactional pattern — see below):
    deployment.
 
 Before CL-6017, `@corbits/chat`, `@corbits/notify`,
-`@corbits/webhook-triggers`, and `@corbits/routines` were self-contained but
+and `@corbits/webhook-triggers` were self-contained but
 **not** transactional: each migration's SQL and its ledger insert were two
 separate statements, so a failure between them could leave a table created
-with no ledger row to show for it. CL-6017 brought all four onto the same
+with no ledger row to show for it. CL-6017 brought them onto the same
 `sql.begin` pattern `@corbits/insights` already used, closing that gap.
 
-Before CL-6005, `@corbits/chat`, `@corbits/routines`, `@corbits/insights`,
+Before CL-6005, `@corbits/chat`, `@corbits/insights`,
 `@corbits/notify`, and `@corbits/webhook-triggers` put their tables directly
 in `public`, on the reasoning that a `tenant_id`/`principal_id` column tied
 them to the platform's own schema. CL-6005 gave each of them a schema named
-for itself instead (`chat`, `routines`, `insights`, `notify`,
+for itself instead (`chat`, `insights`, `notify`,
 `webhook_triggers`) — those columns are plain text, never a real foreign
 key, so nothing about the reference actually required sharing `public`.
 Schema changes like this are hard cutovers, not data-preserving migrations:

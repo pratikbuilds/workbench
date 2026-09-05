@@ -93,6 +93,10 @@ export function emptyOverallUsageSummary(): OverallUsageSummary {
 
 function turnCostUsd(row: UsageTurnRecord): number | null {
   if (row.reportedCostUsd !== null) return row.reportedCostUsd;
+  // A recorded turn with no token counts is not $0 spend — we did not
+  // observe usage, so cost is unknown (CL-6659). Catalog FREE rates still
+  // apply once tokens are present.
+  if (totalTokens(row.tokens) === 0) return null;
   return costUsd({
     provider: row.provider ?? "",
     model: row.model,
@@ -210,9 +214,26 @@ export async function summarizeUsageByTenant(
 }
 
 /**
+ * Team-space `/workbenches` rows: drop an empty parent (it is a duplicate
+ * of the "All workbenches" landing, CL-6368). Keep the parent when it
+ * recorded turns of its own — otherwise those turns vanish from the
+ * breakdown (CL-6659).
+ */
+export function teamSpaceWorkbenchRows<
+  T extends { readonly tenantId: string; readonly turns: number },
+>(
+  rows: readonly T[],
+  opts: { readonly tenantId: string; readonly isTeamSpace: boolean },
+): readonly T[] {
+  if (!opts.isTeamSpace) return rows;
+  return rows.filter((row) => row.tenantId !== opts.tenantId || row.turns > 0);
+}
+
+/**
  * Activity histogram by UTC day across a tenant scope (see summarizeUsage
- * for what `tenantIds` means). Token totals are always known for recorded
- * turns; pre-sink history simply does not appear.
+ * for what `tenantIds` means). Token totals are known when the adapter
+ * reported them; a recorded turn with every class at zero is an honest
+ * absence, not $0.00. Pre-sink history simply does not appear.
  */
 export async function activityByDay(
   store: UsageStore,

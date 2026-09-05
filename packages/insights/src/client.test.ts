@@ -7,6 +7,8 @@ import {
   formatCount,
   formatUsd,
   INSIGHTS_WINDOW_DAYS,
+  modelsWithMissingRates,
+  modelsWithUnreportedTokens,
   tokensLabel,
   topModelsByCost,
   usageChromeLabel,
@@ -163,5 +165,57 @@ describe("CL-6877 usage chrome labels", () => {
       "— · 1,250 tok",
     );
     expect(usageChromeLabel(EMPTY_OVERALL_USAGE)).not.toContain("0 tok");
+  });
+});
+
+describe("CL-6659 unreported tokens vs missing rates", () => {
+  const zeroTokens = {
+    input: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    output: 0,
+    thinking: 0,
+    total: 0,
+  };
+
+  test("modelsWithUnreportedTokens names models that recorded turns but no token counts", () => {
+    expect(
+      modelsWithUnreportedTokens({
+        turns: 2,
+        tokens: zeroTokens,
+        costUsd: null,
+        byModel: [
+          {
+            model: "qwen3:latest",
+            turns: 2,
+            tokens: zeroTokens,
+            costUsd: null,
+          },
+        ],
+      }),
+    ).toEqual(["qwen3:latest"]);
+    expect(modelsWithUnreportedTokens(EMPTY_OVERALL_USAGE)).toEqual([]);
+  });
+
+  test("modelsWithMissingRates still requires tokens so unreported turns are not labeled as unknown rates", () => {
+    expect(
+      modelsWithMissingRates({
+        turns: 1,
+        tokens: zeroTokens,
+        costUsd: null,
+        byModel: [
+          {
+            model: "qwen3:latest",
+            turns: 1,
+            tokens: zeroTokens,
+            costUsd: null,
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  test("usageChromeLabel is an em-dash when cost is unknown and tokens were not reported", () => {
+    expect(usageChromeLabel({ costUsd: null, tokens: zeroTokens })).toBe("—");
   });
 });

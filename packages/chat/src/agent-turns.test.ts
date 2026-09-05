@@ -111,6 +111,53 @@ describe("createInMemoryAgentTurnStore", () => {
     expect(listed.map((turn) => turn.id)).toEqual([second.id, first.id]);
   });
 
+  // CL-6396: two simultaneously-running rows for the same (workbench, agent)
+  // are no longer a coin flip when the caller names the occurrence. The
+  // newest-occurrence pick remains the documented fallback for a lookup
+  // that omits childRunId (an old sidecar's agent.event frames).
+  test("findRunningTurn names a specific occurrence when childRunId is given", async () => {
+    const store = createInMemoryAgentTurnStore();
+    const first = await store.startTurn(BASE);
+    const second = await store.startTurn(BASE);
+    expect(first.childRunId).toBe("turn__0");
+    expect(second.childRunId).toBe("turn__1");
+    expect(first.status).toBe("running");
+    expect(second.status).toBe("running");
+
+    expect((await store.findRunningTurn(BASE))?.id).toBe(second.id);
+    expect(
+      (await store.findRunningTurn({ ...BASE, childRunId: "turn__0" }))?.id,
+    ).toBe(first.id);
+    expect(
+      (await store.findRunningTurn({ ...BASE, childRunId: "turn__1" }))?.id,
+    ).toBe(second.id);
+    expect(
+      await store.findRunningTurn({ ...BASE, childRunId: "turn__9" }),
+    ).toBeUndefined();
+  });
+
+  // CL-7200: listing used to sort by startedAt string alone, while
+  // findRunningTurn sorted by occurrence. Two turns sharing a timestamp
+  // (same-millisecond ISO strings compare equal) then disagreed — listing
+  // kept Map insertion order, the running-turn resolver picked the later
+  // occurrence. Both orderings share startedAt then occurrence as the
+  // deterministic tiebreak so they name the same newest turn.
+  test("listing and findRunningTurn agree when two turns share a timestamp", async () => {
+    const clock = 1_000;
+    const store = createInMemoryAgentTurnStore({ now: () => clock });
+    const first = await store.startTurn(BASE);
+    const second = await store.startTurn(BASE);
+    expect(first.startedAt).toBe(second.startedAt);
+    expect(second.occurrence).toBeGreaterThan(first.occurrence);
+
+    expect((await store.findRunningTurn(BASE))?.id).toBe(second.id);
+    const listed = await store.listTurns({
+      tenantId: BASE.tenantId,
+      workbenchId: BASE.workbenchId,
+    });
+    expect(listed.map((turn) => turn.id)).toEqual([second.id, first.id]);
+  });
+
   // CL-6451: a dispatch the supervisor failed (or a hub that died
   // mid-turn) never sends the event that closes its row, so a turn
   // still `running` past the occurrence timeout is dead by construction
@@ -292,8 +339,8 @@ describe("createInMemoryAgentTurnStore", () => {
     // guarantee CL-7193 already gives a timed-out turn against a late
     // reply, now exercised for the cancel outcome specifically, since
     // cancellation is a NEW way to close a turn out from under work
-    // that is still in flight (a `message_response` gate answer, an
-    // ordinary reply) and has no code of its own to fall back on if
+    // that is still in flight (an approval gate answer, an ordinary
+    // reply) and has no code of its own to fall back on if
     // this compare-and-set ever regressed.
     test("a turn cancelled while a real reply is in flight cannot be reopened by that reply landing late", async () => {
       const store = createInMemoryAgentTurnStore();
@@ -307,8 +354,8 @@ describe("createInMemoryAgentTurnStore", () => {
       });
       expect(cancelled?.status).toBe("cancelled");
 
-      // The agent (or a message_response gate answer correlating to
-      // this turn) finishes its work anyway -- CL-7230's known ceiling
+      // The agent (or an approval gate answer correlating to this
+      // turn) finishes its work anyway -- CL-7230's known ceiling
       // is that nothing here can stop it -- and tries to close the same
       // turn as a normal completed reply.
       const lateReply = await store.finishTurn({

@@ -82,7 +82,7 @@ describe("postRoomMessage", () => {
     expect(posted.parts).toEqual([
       {
         kind: "text",
-        text: "This agent could not complete your request due to a credential error",
+        text: CONSUMER_INFERENCE_FAILURE_NOTICE,
       },
     ]);
     const listed = await roomMessages.listMessages({

@@ -24,8 +24,8 @@ native tenant middleware.
 - Serves the built `apps/web` SPA from its own origin
   (`HUB_STATIC_DIR` points at `apps/web/dist`), so every `/api` call the
   interface makes is same-origin.
-- `credential-expiry-sweep.ts`, `cron-due.ts`, `routine-launcher.ts`,
-  `routine-scheduler.ts`, `tenant-create-guard.ts` are host-level
+- `credential-expiry-sweep.ts`, `cron-due.ts`, `workflow-scheduler.ts`,
+  `tenant-create-guard.ts` are host-level
   background jobs and guards wired at boot, alongside the route mounts.
 - `in-flight-requests.ts` and `shutdown.ts` bound SIGINT/SIGTERM: the hub
   waits for Hono handlers that have not yet returned a Response (a

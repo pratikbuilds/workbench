@@ -59,5 +59,6 @@ export {
   type SendFoldedMailAttemptResult,
   type ListFoldedMailParams,
 } from "./mail";
+export { tagCredentialCipher } from "./credential-cipher-tag";
 export { foldedRunsSchema, foldedRun } from "./schema";
 export { lookupFoldedRunReconnectKey } from "./reconnect";

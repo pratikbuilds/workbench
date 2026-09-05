@@ -32,12 +32,14 @@ export class UnauthenticatedError extends Error {
 
 /** The one HTTP-query error shape every hub request throws: a human message
  * plus the response status when one exists (absent for network failures),
- * plus the request path for logs — never surfaced in user-facing copy. */
+ * plus the request path for logs — never surfaced in user-facing copy —
+ * plus the envelope `refId` when the hub answered through the sink. */
 export class ApiQueryError extends Error {
   constructor(
     message: string,
     readonly status?: number,
     readonly path?: string,
+    readonly refId?: string,
   ) {
     super(message);
   }

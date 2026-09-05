@@ -41,7 +41,6 @@
         "@corbits/artifacts-hub": "workspace:*",
         "@corbits/bench": "workspace:*",
         "@corbits/chat": "workspace:*",
-        "@corbits/code-review-workflow": "workspace:*",
         "@corbits/commands": "workspace:*",
         "@corbits/connections": "workspace:*",
         "@corbits/credential-providers": "workspace:*",
@@ -55,14 +54,14 @@
         "@corbits/inbox": "workspace:*",
         "@corbits/inference-catalog": "workspace:*",
         "@corbits/insights": "workspace:*",
-        "@corbits/mailbox": "github:corbitsdev/corbits-mailbox#caa5214a2811a66a6f3dd3b7631b5f53591c8c14",
+        "@corbits/mailbox": "github:corbitsdev/corbits-mailbox#118a2cd3b0b2d83abcd57b4bed1698e95ee41b6d",
         "@corbits/mcp-tools": "workspace:*",
         "@corbits/memory": "github:corbitsdev/corbits-memory#9e6f213fa2c002b531d3f6af1aa0abd737b8afe3",
         "@corbits/memory-hub": "workspace:*",
         "@corbits/notify": "workspace:*",
         "@corbits/preferences": "workspace:*",
         "@corbits/presence": "workspace:*",
-        "@corbits/routines": "workspace:*",
+        "@corbits/process-provisioner": "workspace:*",
         "@corbits/run-key-history": "workspace:*",
         "@corbits/run-scope": "workspace:*",
         "@corbits/seeding": "workspace:*",
@@ -90,10 +89,10 @@
         "@workbench/onboarding": "workspace:*",
         "@workbench/templates": "workspace:*",
         "arktype": "catalog:",
-        "better-auth": "^1.4.18",
-        "drizzle-orm": "0.45.2",
-        "hono": "^4.11.9",
-        "postgres": "^3.4.8",
+        "better-auth": "catalog:",
+        "drizzle-orm": "catalog:",
+        "hono": "catalog:",
+        "postgres": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -159,7 +158,6 @@
         "@corbits/preferences": "workspace:*",
         "@corbits/presence": "workspace:*",
         "@corbits/react-ui": "github:corbitsdev/react-ui#3b122812a307ccb35be31386f7696020c5a84635",
-        "@corbits/routines": "workspace:*",
         "@corbits/settings-ui": "workspace:*",
         "@corbits/shell-layout": "workspace:*",
         "@corbits/slug": "workspace:*",
@@ -181,7 +179,7 @@
         "@tailwindcss/vite": "^4.3.3",
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.1",
+        "@types/react-dom": "catalog:",
         "@vitejs/plugin-react": "^5.0.0",
         "sonner": "^2.0.7",
         "tailwindcss": "^4.3.3",
@@ -199,7 +197,7 @@
         "@intx/hub-api": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -215,6 +213,7 @@
         "@corbits/error-sink": "workspace:*",
         "@corbits/folded-run-one-shot": "workspace:*",
         "@corbits/skills": "workspace:*",
+        "@corbits/tool-registry-publish": "workspace:*",
         "@corbits/workflows": "workspace:*",
         "@intx/agent": "workspace:*",
         "@intx/db": "workspace:*",
@@ -226,14 +225,15 @@
         "@workbench/templates": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "isomorphic-git": "catalog:",
         "postgres": "catalog:",
+        "semver": "catalog:",
       },
       "devDependencies": {
-        "@corbits/tool-registry-publish": "workspace:*",
         "@intx/crypto": "0.3.0",
         "@types/bun": "catalog:",
+        "@types/semver": "catalog:",
         "typescript": "catalog:",
       },
     },
@@ -296,7 +296,7 @@
       "devDependencies": {
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.1",
+        "@types/react-dom": "catalog:",
         "react-dom": "^19.2.0",
         "typescript": "catalog:",
       },
@@ -311,7 +311,7 @@
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
       },
       "devDependencies": {
         "@intx/hub-common": "0.3.0",
@@ -334,7 +334,7 @@
       "devDependencies": {
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.1",
+        "@types/react-dom": "catalog:",
         "react-dom": "^19.2.0",
         "typescript": "catalog:",
       },
@@ -354,7 +354,7 @@
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -371,7 +371,7 @@
         "@intx/hub-api": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -433,6 +433,7 @@
         "@corbits/error-sink": "workspace:*",
         "@corbits/folded-runs": "workspace:*",
         "@corbits/hub-api-client": "workspace:*",
+        "@corbits/mailbox": "github:corbitsdev/corbits-mailbox#118a2cd3b0b2d83abcd57b4bed1698e95ee41b6d",
         "@corbits/memory": "github:corbitsdev/corbits-memory#9e6f213fa2c002b531d3f6af1aa0abd737b8afe3",
         "@corbits/turn-artifacts": "workspace:*",
         "@corbits/url-path": "workspace:*",
@@ -451,7 +452,7 @@
         "@intx/workflow-deploy": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -484,7 +485,7 @@
         "@intx/inference": "workspace:*",
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.1",
+        "@types/react-dom": "catalog:",
         "typescript": "catalog:",
       },
     },
@@ -528,7 +529,7 @@
         "@happy-dom/global-registrator": "^20.11.2",
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.2",
+        "@types/react-dom": "catalog:",
         "react-dom": "^19.2.0",
         "typescript": "catalog:",
       },
@@ -540,7 +541,7 @@
         "@corbits/error-sink": "workspace:*",
         "@intx/hub-api": "workspace:*",
         "arktype": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -566,7 +567,7 @@
         "@modelcontextprotocol/sdk": "catalog:",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
         "simple-icons": "^16.28.0",
       },
@@ -577,7 +578,7 @@
     },
     "packages/connections-tools": {
       "name": "@corbits/connections-tools",
-      "version": "0.0.7",
+      "version": "0.0.8",
       "dependencies": {
         "@corbits/connections": "workspace:*",
         "@intx/agent": "workspace:*",
@@ -601,7 +602,7 @@
         "@happy-dom/global-registrator": "^20.11.2",
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.2",
+        "@types/react-dom": "catalog:",
         "react-dom": "^19.2.0",
         "typescript": "catalog:",
       },
@@ -668,7 +669,6 @@
         "@corbits/error-sink": "workspace:*",
         "@corbits/hub-api-client": "workspace:*",
         "@corbits/migration-runner": "workspace:*",
-        "@corbits/routines": "workspace:*",
         "@corbits/seeding": "workspace:*",
         "@corbits/webhook-triggers": "workspace:*",
         "@intx/agent": "workspace:*",
@@ -683,7 +683,7 @@
         "@workbench/templates": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -692,7 +692,6 @@
         "@corbits/github-tools": "workspace:*",
         "@corbits/mcp-tools": "workspace:*",
         "@corbits/memory-tools": "workspace:*",
-        "@corbits/routines-tools": "workspace:*",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
       },
@@ -744,7 +743,7 @@
     },
     "packages/github-tools": {
       "name": "@corbits/github-tools",
-      "version": "0.0.9",
+      "version": "0.0.10",
       "dependencies": {
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
@@ -814,7 +813,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@corbits/error-sink": "workspace:*",
-        "@corbits/mailbox": "github:corbitsdev/corbits-mailbox#caa5214a2811a66a6f3dd3b7631b5f53591c8c14",
+        "@corbits/mailbox": "github:corbitsdev/corbits-mailbox#118a2cd3b0b2d83abcd57b4bed1698e95ee41b6d",
         "@corbits/notify": "workspace:*",
         "@intx/hub-api": "workspace:*",
         "@intx/log": "0.3.0",
@@ -843,7 +842,7 @@
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -878,7 +877,7 @@
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -888,8 +887,9 @@
     },
     "packages/interaction-tools": {
       "name": "@corbits/interaction-tools",
-      "version": "0.0.4",
+      "version": "0.0.7",
       "dependencies": {
+        "@corbits/error-sink": "workspace:*",
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
@@ -958,7 +958,7 @@
     },
     "packages/mcp-tools": {
       "name": "@corbits/mcp-tools",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
@@ -978,7 +978,7 @@
         "@corbits/error-sink": "workspace:*",
         "@corbits/memory": "github:corbitsdev/corbits-memory#9e6f213fa2c002b531d3f6af1aa0abd737b8afe3",
         "arktype": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -1066,7 +1066,7 @@
         "@workbench/templates": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -1091,7 +1091,7 @@
         "@happy-dom/global-registrator": "^20.11.2",
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.1",
+        "@types/react-dom": "catalog:",
         "react-dom": "^19.2.0",
         "typescript": "catalog:",
       },
@@ -1106,7 +1106,7 @@
         "@intx/hub-api": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -1121,9 +1121,23 @@
         "@corbits/error-sink": "workspace:*",
         "@intx/hub-api": "workspace:*",
         "arktype": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "y-protocols": "^1.0.7",
         "yjs": "^13.6.32",
+      },
+      "devDependencies": {
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/process-provisioner": {
+      "name": "@corbits/process-provisioner",
+      "version": "0.0.1",
+      "dependencies": {
+        "@corbits/error-sink": "workspace:*",
+        "@corbits/sandbox-sidecar": "workspace:*",
+        "@intx/hub-sessions": "workspace:*",
+        "arktype": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -1155,48 +1169,6 @@
         "typescript": "catalog:",
       },
     },
-    "packages/routines": {
-      "name": "@corbits/routines",
-      "version": "0.0.1",
-      "dependencies": {
-        "@corbits/chat": "workspace:*",
-        "@corbits/error-sink": "workspace:*",
-        "@corbits/folded-run-one-shot": "workspace:*",
-        "@corbits/migration-runner": "workspace:*",
-        "@corbits/slug": "workspace:*",
-        "@corbits/workflows": "workspace:*",
-        "@intx/authz": "0.3.0",
-        "@intx/db": "workspace:*",
-        "@intx/hub-api": "workspace:*",
-        "@intx/hub-common": "0.3.0",
-        "@intx/log": "0.3.0",
-        "@intx/types": "workspace:*",
-        "arktype": "catalog:",
-        "cronstrue": "^3.24.0",
-        "drizzle-orm": "catalog:",
-        "hono": "catalog:",
-        "postgres": "catalog:",
-      },
-      "devDependencies": {
-        "@types/bun": "catalog:",
-        "typescript": "catalog:",
-      },
-    },
-    "packages/routines-tools": {
-      "name": "@corbits/routines-tools",
-      "version": "0.0.10",
-      "dependencies": {
-        "@corbits/routines": "workspace:*",
-        "@corbits/workflows": "workspace:*",
-        "@intx/agent": "workspace:*",
-        "@intx/types": "workspace:*",
-        "arktype": "catalog:",
-      },
-      "devDependencies": {
-        "@types/bun": "catalog:",
-        "typescript": "catalog:",
-      },
-    },
     "packages/run-key-history": {
       "name": "@corbits/run-key-history",
       "version": "0.0.1",
@@ -1207,7 +1179,7 @@
         "@intx/log": "0.3.0",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -1226,7 +1198,7 @@
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -1266,15 +1238,26 @@
       "version": "0.0.1",
       "dependencies": {
         "@corbits/assistant-workflow": "workspace:*",
+        "@corbits/attio-task-agent-workflow": "workspace:*",
+        "@corbits/code-review-workflow": "workspace:*",
+        "@corbits/collateral-generation-workflow": "workspace:*",
         "@corbits/connections": "workspace:*",
+        "@corbits/diligence-brief-workflow": "workspace:*",
         "@corbits/echo-workflow": "workspace:*",
+        "@corbits/exa-topic-watch-workflow": "workspace:*",
+        "@corbits/granola-call-workflow": "workspace:*",
         "@corbits/heartbeat-workflow": "workspace:*",
         "@corbits/hub-api-client": "workspace:*",
         "@corbits/inference-catalog": "workspace:*",
         "@corbits/last-30-days-research-workflow": "workspace:*",
+        "@corbits/morning-brief-workflow": "workspace:*",
+        "@corbits/pain-point-collateral-workflow": "workspace:*",
+        "@corbits/process-granola-call-workflow": "workspace:*",
+        "@corbits/reddit-opportunity-scanner-workflow": "workspace:*",
         "@corbits/tool-registry-publish": "workspace:*",
         "@corbits/workbench-digest-workflow": "workspace:*",
         "@corbits/workflows": "workspace:*",
+        "@intx/agent": "workspace:*",
         "@intx/inference": "workspace:*",
         "@intx/types": "workspace:*",
         "@workbench/templates": "workspace:*",
@@ -1307,7 +1290,7 @@
         "@happy-dom/global-registrator": "^20.11.2",
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.1",
+        "@types/react-dom": "catalog:",
         "react-dom": "^19.2.0",
         "typescript": "catalog:",
       },
@@ -1322,7 +1305,7 @@
         "@happy-dom/global-registrator": "^20.11.2",
         "@types/bun": "catalog:",
         "@types/react": "^19.2.2",
-        "@types/react-dom": "^19.2.2",
+        "@types/react-dom": "catalog:",
         "react-dom": "^19.2.0",
         "typescript": "catalog:",
       },
@@ -1337,7 +1320,7 @@
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -1354,7 +1337,7 @@
         "@intx/hub-sessions": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "isomorphic-git": "catalog:",
         "postgres": "catalog:",
       },
@@ -1388,7 +1371,7 @@
         "chat": "^4.34.0",
         "corbits-tag": "github:corbitsdev/corbits-tag#92eabf4f7bf0a9663799c07db6c3f72a4275f894",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -1429,7 +1412,7 @@
     },
     "packages/tools-skills": {
       "name": "@corbits/tools-skills",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
@@ -1487,7 +1470,7 @@
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -1522,8 +1505,9 @@
         "@intx/hub-sessions": "workspace:*",
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
+        "cronstrue": "^3.24.0",
         "drizzle-orm": "catalog:",
-        "hono": "^4.11.9",
+        "hono": "catalog:",
         "postgres": "catalog:",
       },
       "devDependencies": {
@@ -1800,7 +1784,7 @@
     },
     "workflows/assistant": {
       "name": "@corbits/assistant-workflow",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@corbits/catalog-tools": "workspace:*",
         "@intx/agent": "workspace:*",
@@ -1811,7 +1795,6 @@
         "@corbits/agent-directory-tools": "workspace:*",
         "@corbits/connections-tools": "workspace:*",
         "@corbits/interaction-tools": "workspace:*",
-        "@corbits/routines-tools": "workspace:*",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
       },
@@ -2041,11 +2024,12 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@tanstack/react-query": "^5.101.4",
     "@types/bun": "^1.3.9",
+    "@types/react-dom": "^19.2.2",
     "@types/semver": "^7.7.1",
     "@types/ssri": "^7.1.5",
     "arktype": "^2.2.0",
     "better-auth": "^1.4.18",
-    "drizzle-orm": "^0.45.1",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.11.9",
     "isomorphic-git": "^1.27.2",
     "postgres": "^3.4.8",
@@ -2235,7 +2219,7 @@
 
     "@corbits/longevity-sim": ["@corbits/longevity-sim@workspace:packages/longevity-sim"],
 
-    "@corbits/mailbox": ["@corbits/mailbox@github:corbitsdev/corbits-mailbox#caa5214", { "dependencies": { "@hono/standard-validator": "0.2.3", "@standard-community/standard-json": "0.3.5", "@standard-community/standard-openapi": "0.2.9", "arktype": "2.1.29", "hono-openapi": "1.3.1" }, "peerDependencies": { "@intx/log": "^0.2.2", "@intx/mime": "^0.2.2", "@intx/types": "^0.2.2", "drizzle-orm": "^0.45.2", "hono": "^4.12.0", "postgres": "^3.4.0" } }, "corbitsdev-corbits-mailbox-caa5214", "sha512-z8DRBFgA4ukM8p29COeaMjfKZYe5jAUF4OBMiaIQFuW592+DGD/y6Ws6SjGlXmR9azkHNWh8oTzjlWlRP24vsQ=="],
+    "@corbits/mailbox": ["@corbits/mailbox@github:corbitsdev/corbits-mailbox#118a2cd", { "dependencies": { "@hono/standard-validator": "0.2.3", "@standard-community/standard-json": "0.3.5", "@standard-community/standard-openapi": "0.2.9", "arktype": "2.1.29", "hono-openapi": "1.3.1" }, "peerDependencies": { "@intx/log": "^0.2.2", "@intx/mime": "^0.2.2", "@intx/types": "^0.2.2", "drizzle-orm": "^0.45.2", "hono": "^4.12.0", "postgres": "^3.4.0" } }, "corbitsdev-corbits-mailbox-118a2cd", "sha512-jVRl6/IH34JBPVUz7mqWyBm1w7uJxvYAI27gjw7zL1dFO4L+D0E5q/8b+mpwKMNOKKlGXU6UF5pdHnY8ilYx8g=="],
 
     "@corbits/manus-tools": ["@corbits/manus-tools@workspace:packages/manus-tools"],
 
@@ -2267,6 +2251,8 @@
 
     "@corbits/process-granola-call-workflow": ["@corbits/process-granola-call-workflow@workspace:workflows/process-granola-call"],
 
+    "@corbits/process-provisioner": ["@corbits/process-provisioner@workspace:packages/process-provisioner"],
+
     "@corbits/provider-pricing": ["@corbits/provider-pricing@workspace:packages/provider-pricing"],
 
     "@corbits/react-ui": ["@corbits/react-ui@github:corbitsdev/react-ui#3b12281", { "dependencies": { "class-variance-authority": "^0.7.1", "clsx": "^2.1.1", "tailwind-merge": "^3.3.1" }, "peerDependencies": { "@radix-ui/react-dialog": "^1.1.15", "@radix-ui/react-dropdown-menu": "^2.1.16", "@radix-ui/react-slot": "^1.2.3", "@radix-ui/react-tooltip": "^1.2.8", "@tanstack/react-query": "^5.90.2", "lucide-react": "^0.545.0 || ^1.0.0", "react": "^18.2.0 || ^19.0.0", "react-dom": "^18.2.0 || ^19.0.0", "sonner": "^2.0.7" }, "optionalPeers": ["@tanstack/react-query"] }, "corbitsdev-react-ui-3b12281", "sha512-Abvm/DO0Gqg0ITHGT9355ZxyKRPMVJLSSQSjpd3a8qt4JPrSMOLIOS4sX8ZMNNaArIbnY9F+VKrOWkUJUyO4Nw=="],
@@ -2274,10 +2260,6 @@
     "@corbits/reddit-opportunity-scanner-workflow": ["@corbits/reddit-opportunity-scanner-workflow@workspace:workflows/reddit-opportunity-scanner"],
 
     "@corbits/reddit-tools": ["@corbits/reddit-tools@workspace:packages/reddit-tools"],
-
-    "@corbits/routines": ["@corbits/routines@workspace:packages/routines"],
-
-    "@corbits/routines-tools": ["@corbits/routines-tools@workspace:packages/routines-tools"],
 
     "@corbits/run-key-history": ["@corbits/run-key-history@workspace:packages/run-key-history"],
 
@@ -3581,7 +3563,7 @@
 
     "@babel/helper-compilation-targets/semver": ["semver@6.3.1", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="],
 
-    "@corbits/artifact-ui/@corbits/react-ui": ["@corbits/react-ui@github:corbitsdev/react-ui#3b12281", { "dependencies": { "class-variance-authority": "^0.7.1", "clsx": "^2.1.1", "tailwind-merge": "^3.3.1" }, "peerDependencies": { "@radix-ui/react-dialog": "^1.1.15", "@radix-ui/react-dropdown-menu": "^2.1.16", "@radix-ui/react-slot": "^1.2.3", "@radix-ui/react-tooltip": "^1.2.8", "@tanstack/react-query": "^5.90.2", "lucide-react": "^0.545.0 || ^1.0.0", "react": "^18.2.0 || ^19.0.0", "react-dom": "^18.2.0 || ^19.0.0", "sonner": "^2.0.7" }, "optionalPeers": ["@tanstack/react-query"] }, "corbitsdev-react-ui-3b12281", "sha512-Abvm/DO0Gqg0ITHGT9355ZxyKRPMVJLSSQSjpd3a8qt4JPrSMOLIOS4sX8ZMNNaArIbnY9F+VKrOWkUJUyO4Nw=="],
+    "@corbits/inbox/@corbits/mailbox": ["@corbits/mailbox@github:corbitsdev/corbits-mailbox#118a2cd", { "dependencies": { "@hono/standard-validator": "0.2.3", "@standard-community/standard-json": "0.3.5", "@standard-community/standard-openapi": "0.2.9", "arktype": "2.1.29", "hono-openapi": "1.3.1" }, "peerDependencies": { "@intx/log": "^0.2.2", "@intx/mime": "^0.2.2", "@intx/types": "^0.2.2", "drizzle-orm": "^0.45.2", "hono": "^4.12.0", "postgres": "^3.4.0" } }, "corbitsdev-corbits-mailbox-118a2cd", "sha512-jVRl6/IH34JBPVUz7mqWyBm1w7uJxvYAI27gjw7zL1dFO4L+D0E5q/8b+mpwKMNOKKlGXU6UF5pdHnY8ilYx8g=="],
 
     "@corbits/memory-hub/@corbits/memory": ["@corbits/memory@github:corbitsdev/corbits-memory#9e6f213", { "dependencies": { "@intx/agent": "0.2.2", "@intx/authz": "0.2.2", "@intx/hub-api": "0.2.2", "@intx/log": "0.2.2", "@intx/workflow": "0.2.2", "arktype": "^2.1.29", "drizzle-orm": "^0.45.1", "hono": "^4.9.0", "hono-openapi": "^1.3.1", "postgres": "^3.4.7" } }, "corbitsdev-corbits-memory-9e6f213", "sha512-utnM4ZT2zmslcPXYWAAqxlDNLcpGsXFiTOtj8h7+OXnhCP0Eaw8yl25+yCTyHpvt3jcdeG4h5uFsSj7ou0BZCA=="],
 
@@ -3607,9 +3589,9 @@
 
     "@typescript-eslint/eslint-plugin/ignore": ["ignore@7.0.6", "", {}, "sha512-BAg6QkE8W+TuQLrrw0Ugr7HegXduRuuj8/ti2kSOc+jz1dmx8/WNcjr6XGnq5YpDWxFwwaavqD0+jIUOKelTsw=="],
 
-    "@workbench/hub/@corbits/memory": ["@corbits/memory@github:corbitsdev/corbits-memory#9e6f213", { "dependencies": { "@intx/agent": "0.2.2", "@intx/authz": "0.2.2", "@intx/hub-api": "0.2.2", "@intx/log": "0.2.2", "@intx/workflow": "0.2.2", "arktype": "^2.1.29", "drizzle-orm": "^0.45.1", "hono": "^4.9.0", "hono-openapi": "^1.3.1", "postgres": "^3.4.7" } }, "corbitsdev-corbits-memory-9e6f213", "sha512-utnM4ZT2zmslcPXYWAAqxlDNLcpGsXFiTOtj8h7+OXnhCP0Eaw8yl25+yCTyHpvt3jcdeG4h5uFsSj7ou0BZCA=="],
+    "@workbench/hub/@corbits/mailbox": ["@corbits/mailbox@github:corbitsdev/corbits-mailbox#118a2cd", { "dependencies": { "@hono/standard-validator": "0.2.3", "@standard-community/standard-json": "0.3.5", "@standard-community/standard-openapi": "0.2.9", "arktype": "2.1.29", "hono-openapi": "1.3.1" }, "peerDependencies": { "@intx/log": "^0.2.2", "@intx/mime": "^0.2.2", "@intx/types": "^0.2.2", "drizzle-orm": "^0.45.2", "hono": "^4.12.0", "postgres": "^3.4.0" } }, "corbitsdev-corbits-mailbox-118a2cd", "sha512-jVRl6/IH34JBPVUz7mqWyBm1w7uJxvYAI27gjw7zL1dFO4L+D0E5q/8b+mpwKMNOKKlGXU6UF5pdHnY8ilYx8g=="],
 
-    "@workbench/web/@corbits/react-ui": ["@corbits/react-ui@github:corbitsdev/react-ui#3b12281", { "dependencies": { "class-variance-authority": "^0.7.1", "clsx": "^2.1.1", "tailwind-merge": "^3.3.1" }, "peerDependencies": { "@radix-ui/react-dialog": "^1.1.15", "@radix-ui/react-dropdown-menu": "^2.1.16", "@radix-ui/react-slot": "^1.2.3", "@radix-ui/react-tooltip": "^1.2.8", "@tanstack/react-query": "^5.90.2", "lucide-react": "^0.545.0 || ^1.0.0", "react": "^18.2.0 || ^19.0.0", "react-dom": "^18.2.0 || ^19.0.0", "sonner": "^2.0.7" }, "optionalPeers": ["@tanstack/react-query"] }, "corbitsdev-react-ui-3b12281", "sha512-Abvm/DO0Gqg0ITHGT9355ZxyKRPMVJLSSQSjpd3a8qt4JPrSMOLIOS4sX8ZMNNaArIbnY9F+VKrOWkUJUyO4Nw=="],
+    "@workbench/hub/@corbits/memory": ["@corbits/memory@github:corbitsdev/corbits-memory#9e6f213", { "dependencies": { "@intx/agent": "0.2.2", "@intx/authz": "0.2.2", "@intx/hub-api": "0.2.2", "@intx/log": "0.2.2", "@intx/workflow": "0.2.2", "arktype": "^2.1.29", "drizzle-orm": "^0.45.1", "hono": "^4.9.0", "hono-openapi": "^1.3.1", "postgres": "^3.4.7" } }, "corbitsdev-corbits-memory-9e6f213", "sha512-utnM4ZT2zmslcPXYWAAqxlDNLcpGsXFiTOtj8h7+OXnhCP0Eaw8yl25+yCTyHpvt3jcdeG4h5uFsSj7ou0BZCA=="],
 
     "ajv-formats/ajv": ["ajv@8.20.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
 

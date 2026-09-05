@@ -1,8 +1,8 @@
 {
   "name": "@corbits/interaction-tools",
   "private": true,
-  "description": "The ask_user tool: an @intx/agent bundle that poses an interview question in-thread as a question block and parks the turn on a message_response gate until the user answers",
-  "version": "0.0.4",
+  "description": "The ask_user tool: an @intx/agent bundle that poses an interview question in-thread as a question block, then ends the turn — the user's answer arrives as the agent's next message, not this call's result",
+  "version": "0.0.7",
   "license": "LGPL-2.1-or-later",
   "type": "module",
   "exports": {
@@ -13,6 +13,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@corbits/error-sink": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/types": "workspace:*",
     "arktype": "catalog:"

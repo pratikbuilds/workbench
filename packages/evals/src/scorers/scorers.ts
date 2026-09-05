@@ -51,7 +51,7 @@ export function asksQuestions(options: { max: number }) {
 
 /** Fails if any of `tools` was called on the current step — used to
  * assert the interview step builds nothing yet (e.g.
- * `noToolCalls(["create_agent", "routine_create"])`). */
+ * `noToolCalls(["create_agent"])`). */
 export function noToolCalls(tools: readonly string[]) {
   return function noToolCallsScorer(ctx: ScorerContext): ScorerResult {
     const called = (ctx.transcript[ctx.turnIndex]?.toolCalls ?? []).filter(
@@ -67,10 +67,9 @@ export function noToolCalls(tools: readonly string[]) {
   };
 }
 
-/** Fails if any of `BUILD_TOOLS` (create_agent, routine_create,
- * routine_run_now) was called in a step before `interviewAnsweredAtStep`
- * — the owner's rule that the interview (step 1) must land before any
- * building (step 4) starts. */
+/** Fails if any of `BUILD_TOOLS` (create_agent) was called in a step
+ * before `interviewAnsweredAtStep` — the owner's rule that the
+ * interview (step 1) must land before any building (step 4) starts. */
 export function noBuildBeforeAnswers(interviewAnsweredAtStep: number) {
   return function noBuildBeforeAnswersScorer(ctx: ScorerContext): ScorerResult {
     const early = toolCallsUpTo(

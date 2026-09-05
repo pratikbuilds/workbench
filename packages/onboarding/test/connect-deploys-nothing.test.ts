@@ -282,37 +282,17 @@ describe("POST /complete — connecting deploys nothing", () => {
 });
 
 describe("GET /provisioning-status", () => {
-  test("reports live progress while agents are still coming online", async () => {
-    const { hub } = fakeHub({ seededWorkflows: ALL_WORKFLOWS.slice(0, 2) });
-    const server = Bun.serve({ port: 0, fetch: hub.fetch });
-    const store = createInMemoryPendingSeedStore(testCipher());
-    try {
-      const app = mountAuthenticated(
-        createOnboardingRoutes(
-          routeDeps({ hubUrl: `http://localhost:${server.port}`, store }),
-        ),
-      );
-
-      const response = await app.request("/api/onboarding/provisioning-status");
-      const body = (await response.json()) as {
-        kind: string;
-        deployed: string[];
-        pending: string[];
-      };
-
-      expect(response.status).toBe(200);
-      expect(body.kind).toBe("provisioning");
-      expect(body.deployed).toEqual(ALL_WORKFLOWS.slice(0, 2));
-      expect(body.pending).toEqual(ALL_WORKFLOWS.slice(2));
-    } finally {
-      server.stop(true);
-    }
-  });
-
-  test("says the setup agent is ready the moment she is live, while the rest are still pending", async () => {
-    // CL-6462: this one flag is what lets the land hop drop someone into
-    // a conversation without waiting out the whole seed set.
-    const { hub } = fakeHub({ seededWorkflows: [SETUP_AGENT_ASSET_NAME] });
+  // CL-7074 narrowed DEFAULT_WORKFLOWS to just the setup agent, so the
+  // "some deployed, some still pending" progress bar this route used to
+  // report (CL-6462, when the default set was echo/assistant/
+  // workbench-digest) can no longer happen for a real bench: with one
+  // default workflow, provisioning-status is binary — nothing deployed
+  // yet (`provisioning`, setup agent not ready) or fully deployed
+  // (`ready`). This test replaces the old two-test "partial progress"
+  // coverage with that binary reality; `setupAgentReady` and
+  // `kind: "ready"` are asserted at their other call sites below.
+  test("reports provisioning, with the setup agent not yet ready, before she deploys", async () => {
+    const { hub } = fakeHub({ seededWorkflows: [] });
     const server = Bun.serve({ port: 0, fetch: hub.fetch });
     const store = createInMemoryPendingSeedStore(testCipher());
     try {
@@ -326,12 +306,15 @@ describe("GET /provisioning-status", () => {
       const body = (await response.json()) as {
         kind: string;
         setupAgentReady: boolean;
+        deployed: string[];
         pending: string[];
       };
 
+      expect(response.status).toBe(200);
       expect(body.kind).toBe("provisioning");
-      expect(body.setupAgentReady).toBe(true);
-      expect(body.pending.length).toBeGreaterThan(0);
+      expect(body.setupAgentReady).toBe(false);
+      expect(body.deployed).toEqual([]);
+      expect(body.pending).toEqual(ALL_WORKFLOWS);
     } finally {
       server.stop(true);
     }

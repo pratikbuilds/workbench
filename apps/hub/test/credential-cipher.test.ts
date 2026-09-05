@@ -6,8 +6,9 @@
 
 import { describe, expect, test } from "bun:test";
 import { getLogger } from "@intx/log";
+import { tagCredentialCipher } from "@corbits/folded-runs";
 import type { HubConfig } from "../src/config.ts";
-import { credentialCipherFrom } from "../src/index.ts";
+import { credentialCipherFrom, hubCredentialCipher } from "../src/index.ts";
 
 const log = getLogger(["hub", "test"]);
 
@@ -73,5 +74,36 @@ describe("credentialCipherFrom", () => {
     );
     const encrypted = await cipher.encrypt("secret-value", "aad");
     expect(encrypted).not.toBe("secret-value");
+  });
+});
+
+describe("hubCredentialCipher", () => {
+  test("boot tags the cipher built from a configured key", async () => {
+    const cipher = hubCredentialCipher(
+      {
+        ...baseConfig,
+        credentialEncryptionKeyHex: "a".repeat(64),
+      },
+      log,
+    );
+    expect(cipher).toBe(tagCredentialCipher(cipher));
+    const encrypted = await cipher.encrypt("secret-value", "aad");
+    expect(encrypted).not.toBe("secret-value");
+  });
+
+  test("boot tags the noop cipher when ALLOW_PLAINTEXT_SECRETS is set", async () => {
+    const cipher = hubCredentialCipher(
+      { ...baseConfig, allowPlaintextSecrets: true },
+      log,
+    );
+    expect(cipher).toBe(tagCredentialCipher(cipher));
+    const encrypted = await cipher.encrypt("secret-value", "aad");
+    expect(encrypted).toBe("secret-value");
+  });
+
+  test("boot still hard-fails when the key is missing and plaintext is not opted in", () => {
+    expect(() => hubCredentialCipher(baseConfig, log)).toThrow(
+      /CREDENTIAL_ENCRYPTION_KEY/,
+    );
   });
 });

@@ -1,7 +1,7 @@
 // The wire shape for `GET /api/tenants/:tenantId/workflows/definitions/
 // :definitionAssetId/detail` (`./detail-route.ts`) — a definition's own
 // page reads this and nothing else. Pure/browser-safe: no `@intx/*`, no
-// `drizzle-orm`, no `hono` — the same promise `@corbits/routines/client`
+// `drizzle-orm`, no `hono` — the same promise `@corbits/workflows/client`
 // makes, so `apps/web` can import it directly.
 import { type } from "arktype";
 

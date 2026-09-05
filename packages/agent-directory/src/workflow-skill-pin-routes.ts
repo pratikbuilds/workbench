@@ -32,8 +32,8 @@ import type { AssetService } from "@intx/hub-sessions";
 import { isWorkbenchHostDefinitionName } from "@corbits/chat/workbench-host-naming";
 
 import { reindexPinnedSkills } from "./agent-workflow";
+import { commitLatestAgentAssetSnapshot } from "./asset-write";
 import {
-  readAgentDefinitionWorkflowJson,
   RetiredWorkflowEnvelopeError,
   statusForAgentDefinitionDeployError,
   writeAndDeployAgentDefinition,
@@ -167,37 +167,44 @@ export function createWorkflowSkillPinRoutes(
       return c.json(definitionNotFound(body.definitionId), 404);
     }
 
-    const workflowJson = await readAgentDefinitionWorkflowJson(
-      deps.assetService,
-      row.assetId,
-    );
-
-    const skills = await deps.skillsStore.getSkills(row.assetId);
-    const nextSkills = skills.includes(body.skillName)
-      ? skills
-      : [...skills, body.skillName];
-    const nextWorkflowJson = reindexPinnedSkills(
-      workflowJson,
-      await deps.skillIndex.resolve(
-        scope.tenantId,
-        scope.principalId,
-        nextSkills,
-      ),
-    );
-
-    await writeAndDeployAgentDefinition({
+    const next = await commitLatestAgentAssetSnapshot({
       assetService: deps.assetService,
-      deployer: deps.deployer,
-      tenantId: scope.tenantId,
-      principalId: scope.principalId,
       assetId: row.assetId,
-      handle: row.name,
-      workflowJson: nextWorkflowJson,
-      message: `Pin ${body.skillName} skill to ${row.name}`,
+      operation: "pin skill",
+      prepare: async (snapshot) => {
+        const skills = await deps.skillsStore.getSkills(row.assetId);
+        const nextSkills = skills.includes(body.skillName)
+          ? skills
+          : [...skills, body.skillName];
+        return {
+          workflowJson: reindexPinnedSkills(
+            snapshot,
+            await deps.skillIndex.resolve(
+              scope.tenantId,
+              scope.principalId,
+              nextSkills,
+            ),
+          ),
+          message: `Pin ${body.skillName} skill to ${row.name}`,
+          afterWrite: () => deps.skillsStore.setSkills(row.assetId, nextSkills),
+          result: { skills: nextSkills },
+        };
+      },
+      write: async ({ workflowJson, message }) => {
+        await writeAndDeployAgentDefinition({
+          assetService: deps.assetService,
+          deployer: deps.deployer,
+          tenantId: scope.tenantId,
+          principalId: scope.principalId,
+          assetId: row.assetId,
+          handle: row.name,
+          workflowJson,
+          message,
+        });
+      },
     });
-    await deps.skillsStore.setSkills(row.assetId, nextSkills);
 
-    return c.json({ skills: nextSkills });
+    return c.json(next);
   });
 
   return app;

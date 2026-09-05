@@ -1,10 +1,13 @@
 // DOM tests for the interview-question card: open state (lettered options,
 // optional free-text field), answered state (collapsed with a checkmark,
-// controls disabled), and keyboard navigation over the option buttons
-// (native tab order — no custom key handling needed since each option is
-// a plain `<button>`). Mirrors `poll-block.test.tsx`'s stateful-fake
-// pattern: the render always reflects the last `getResponses` read, never
-// a click's own optimistic guess.
+// controls disabled), retry after a failed notify (the route persists the
+// answer before notify, so `own` is set with `notifiedAt: null` even when
+// submit returns an error — including after remount), persist failure (no
+// `own`, open form + generic error), and keyboard navigation over the
+// option buttons (native tab order — no custom key handling needed since
+// each option is a plain `<button>`).
+// Mirrors `poll-block.test.tsx`'s stateful-fake pattern: the render always
+// reflects the last `getResponses` read, never a click's own optimistic guess.
 import { afterEach, describe, expect, test } from "bun:test";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -15,6 +18,7 @@ import type {
   BlockResponseQuery,
 } from "../src/blocks/block-responses";
 import type { MessageItem } from "../src/api";
+import { CHAT_STRINGS } from "../src/strings";
 import { WorkbenchTimeline } from "../src/timeline";
 
 function messageWithQuestionBlock(allowFreeText = false): MessageItem[] {
@@ -42,9 +46,17 @@ function messageWithQuestionBlock(allowFreeText = false): MessageItem[] {
   ];
 }
 
-function fakeBackend() {
-  let answer: { answer: string; optionIndex?: number } | null = null;
+function fakeBackend(opts?: {
+  readonly failSubmits?: number;
+  readonly persistFails?: boolean;
+}) {
+  let answer: {
+    answer: string;
+    optionIndex?: number;
+    notifiedAt: string | null;
+  } | null = null;
   const submitCalls: { answer: string; optionIndex: number | undefined }[] = [];
+  let remainingFails = opts?.failSubmits ?? 0;
 
   const actions: BlockResponseActions = {
     getResponses: async (): Promise<BlockResponseQuery> => ({
@@ -60,6 +72,7 @@ function fakeBackend() {
               ...(answer.optionIndex !== undefined
                 ? { optionIndex: answer.optionIndex }
                 : {}),
+              notifiedAt: answer.notifiedAt,
             },
     }),
     submitPoll: async () => ({ kind: "submitted" }),
@@ -71,10 +84,21 @@ function fakeBackend() {
       optionIndex,
     ) => {
       submitCalls.push({ answer: submittedAnswer, optionIndex });
+      if (opts?.persistFails === true) {
+        return { kind: "error", message: "persist_failed" };
+      }
+      // The route persists the answer before notify; a failed notify still
+      // leaves `own` with `notifiedAt: null` on the subsequent GET.
+      const failing = remainingFails > 0;
+      if (failing) remainingFails -= 1;
       answer = {
         answer: submittedAnswer,
         ...(optionIndex !== undefined ? { optionIndex } : {}),
+        notifiedAt: failing ? null : "2026-01-01T00:00:00.000Z",
       };
+      if (failing) {
+        return { kind: "error", message: "notify_failed" };
+      }
       return { kind: "submitted" };
     },
   };
@@ -114,6 +138,22 @@ async function mount(actions: BlockResponseActions, allowFreeText = false) {
     );
   });
   return container;
+}
+
+function choiceButton(el: HTMLElement, label: string): HTMLButtonElement {
+  const button = [...el.querySelectorAll(".chat-block-question-choice")].find(
+    (node) => node.textContent?.includes(label),
+  ) as HTMLButtonElement | undefined;
+  if (button === undefined) throw new Error(`expected ${label}`);
+  return button;
+}
+
+async function remount(actions: BlockResponseActions, allowFreeText = false) {
+  if (root !== null) act(() => root?.unmount());
+  container?.remove();
+  container = null;
+  root = null;
+  return mount(actions, allowFreeText);
 }
 
 describe("question card — open state", () => {
@@ -183,20 +223,15 @@ describe("question card — answering", () => {
     const backend = fakeBackend();
     const el = await mount(backend.actions);
 
-    const production = [
-      ...el.querySelectorAll(".chat-block-question-choice"),
-    ].find((button) => button.textContent?.includes("Production")) as
-      HTMLButtonElement | undefined;
-    if (production === undefined) throw new Error("expected Production");
-
     await act(async () => {
-      production.click();
+      choiceButton(el, "Production").click();
     });
 
     expect(backend.submitCalls).toEqual([
       { answer: "Production", optionIndex: 1 },
     ]);
     expect(el.querySelector('[data-answered="true"]')).not.toBeNull();
+    expect(el.querySelector(".chat-block-question-check")).not.toBeNull();
     expect(el.textContent).toContain("Production");
     expect(el.querySelectorAll(".chat-block-question-choice")).toHaveLength(0);
   });
@@ -223,5 +258,132 @@ describe("question card — answering", () => {
       { answer: "Somewhere else entirely", optionIndex: undefined },
     ]);
     expect(el.textContent).toContain("Somewhere else entirely");
+    expect(el.querySelector(".chat-block-question-check")).not.toBeNull();
+  });
+
+  test("a failed notify keeps a retry so the saved answer can still reach the agent", async () => {
+    const backend = fakeBackend({ failSubmits: 1 });
+    const el = await mount(backend.actions);
+
+    await act(async () => {
+      choiceButton(el, "Production").click();
+    });
+
+    expect(backend.submitCalls).toEqual([
+      { answer: "Production", optionIndex: 1 },
+    ]);
+    expect(el.querySelector('[data-answered="true"]')).not.toBeNull();
+    expect(el.textContent).toContain("Production");
+    expect(el.querySelector(".chat-block-question-check")).toBeNull();
+    const alert = el.querySelector("[role='alert']");
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toBe(CHAT_STRINGS.blockQuestionNotifyFailed);
+
+    const retry = el.querySelector(
+      "[data-question-retry]",
+    ) as HTMLButtonElement | null;
+    expect(retry).not.toBeNull();
+    expect(retry?.disabled).toBe(false);
+
+    await act(async () => {
+      retry?.click();
+    });
+
+    expect(backend.submitCalls).toEqual([
+      { answer: "Production", optionIndex: 1 },
+      { answer: "Production", optionIndex: 1 },
+    ]);
+    expect(el.querySelector("[role='alert']")).toBeNull();
+    expect(el.querySelector("[data-question-retry]")).toBeNull();
+    expect(el.querySelector('[data-answered="true"]')).not.toBeNull();
+    expect(el.querySelector(".chat-block-question-check")).not.toBeNull();
+    expect(el.querySelectorAll(".chat-block-question-choice")).toHaveLength(0);
+  });
+
+  test("remount after notify_failed still offers retry from GET own", async () => {
+    const backend = fakeBackend({ failSubmits: 1 });
+    const el = await mount(backend.actions);
+
+    await act(async () => {
+      choiceButton(el, "Production").click();
+    });
+    expect(el.querySelector("[data-question-retry]")).not.toBeNull();
+
+    const remounted = await remount(backend.actions);
+    expect(remounted.querySelector('[data-answered="true"]')).not.toBeNull();
+    expect(remounted.querySelector(".chat-block-question-check")).toBeNull();
+    const alert = remounted.querySelector("[role='alert']");
+    expect(alert?.textContent).toBe(CHAT_STRINGS.blockQuestionNotifyFailed);
+    const retry = remounted.querySelector(
+      "[data-question-retry]",
+    ) as HTMLButtonElement | null;
+    expect(retry).not.toBeNull();
+
+    await act(async () => {
+      retry?.click();
+    });
+    expect(backend.submitCalls).toEqual([
+      { answer: "Production", optionIndex: 1 },
+      { answer: "Production", optionIndex: 1 },
+    ]);
+    expect(remounted.querySelector("[data-question-retry]")).toBeNull();
+    expect(
+      remounted.querySelector(".chat-block-question-check"),
+    ).not.toBeNull();
+  });
+
+  test("free-text notify-failed retry resubmits the same string without optionIndex", async () => {
+    const backend = fakeBackend({ failSubmits: 1 });
+    const el = await mount(backend.actions, true);
+
+    const input = el.querySelector(
+      ".chat-block-question-freetext input",
+    ) as HTMLInputElement;
+    const form = el.querySelector(
+      ".chat-block-question-freetext",
+    ) as HTMLFormElement;
+
+    await act(async () => {
+      setInputValue(input, "Somewhere else entirely");
+    });
+    await act(async () => {
+      form.requestSubmit();
+    });
+
+    expect(backend.submitCalls).toEqual([
+      { answer: "Somewhere else entirely", optionIndex: undefined },
+    ]);
+    const retry = el.querySelector(
+      "[data-question-retry]",
+    ) as HTMLButtonElement | null;
+    expect(retry).not.toBeNull();
+
+    await act(async () => {
+      retry?.click();
+    });
+
+    expect(backend.submitCalls).toEqual([
+      { answer: "Somewhere else entirely", optionIndex: undefined },
+      { answer: "Somewhere else entirely", optionIndex: undefined },
+    ]);
+    expect(el.querySelector("[data-question-retry]")).toBeNull();
+  });
+
+  test("persist failure with no own still shows the open form and a generic error", async () => {
+    const backend = fakeBackend({ persistFails: true });
+    const el = await mount(backend.actions);
+
+    await act(async () => {
+      choiceButton(el, "Production").click();
+    });
+
+    expect(backend.submitCalls).toEqual([
+      { answer: "Production", optionIndex: 1 },
+    ]);
+    expect(el.querySelector('[data-answered="true"]')).toBeNull();
+    expect(el.querySelector("[data-question-retry]")).toBeNull();
+    expect(el.querySelectorAll(".chat-block-question-choice")).toHaveLength(3);
+    const alert = el.querySelector("[role='alert']");
+    expect(alert?.textContent).toBe(CHAT_STRINGS.blockQuestionAnswerError);
   });
 });

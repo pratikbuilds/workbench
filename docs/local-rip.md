@@ -86,10 +86,12 @@ Either path:
    `packages/connections/src/credential-test.ts`) before storing anything;
 2. plants it as a credential on your bench alongside that provider's
    curated model catalog;
-3. deploys and (unlike the OAuth callback's own fast half) confirms every
-   default workflow the platform ships: **echo**, **assistant**, and
-   **workbench-digest** (`packages/seeding/src/seed.ts`'s
-   `DEFAULT_WORKFLOWS`).
+3. deploys and (unlike the OAuth callback's own fast half) confirms the
+   one default workflow every real signup gets: **assistant**
+   (`packages/seeding/src/seed.ts`'s `DEFAULT_WORKFLOWS`, CL-7074).
+   **echo** and **workbench-digest** are on-demand `CATALOG_WORKFLOWS`
+   entries now — deployed only when something asks for them by name,
+   never automatically at signup.
 
 Expect the page to show a short "setting up your workbench" wait while
 `/complete-setup` polls, then land on a "Your first routines are running"
@@ -109,8 +111,10 @@ through the hub's native asset REST routes). Descendants inherit it;
 `seedTenant` does not pack. Isolated
 tests run with no explicit tenant config so the walkthrough's personal
 bench is itself the root — then the same publish happens once onto that
-bench, and **echo**, **workbench-digest**, and **assistant** all come up
-live. `scripts/e2e/local-rip.test.ts` asserts exactly that. The default
+bench, and **assistant** comes up live by default; `scripts/e2e/local-rip.test.ts`
+also deploys **echo** and **workbench-digest** from `CATALOG_WORKFLOWS`
+onto that same bench (the on-demand path, exercised directly rather
+than assumed) to prove they still come up live too. The default
 self-serve story is the other way: the hub ensures a root tenant at boot
 (`WORKBENCH_DEFAULT_TENANT`, default `workbench`), and first-login
 personal benches parent under it.

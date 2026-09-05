@@ -238,6 +238,10 @@ export async function runOneShotFoldedPrompt(
 
     void (async () => {
       try {
+        // Keyed by the launched run's instance id (`generateId("workflowRun")`),
+        // the same string shape chat uses for workbench ids — the host
+        // injects its process-wide cache rather than this runner minting
+        // one of its own.
         const cryptoProvider = await deps.cryptoProviders.get(instanceId);
         const sent = await sendMail(deps.foldedRuns, {
           tenantId: input.tenantId,

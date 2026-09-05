@@ -177,12 +177,15 @@ for how a workbench's settings relate to its tenant, and
 
 ## Routines, through conversation
 
-A **Routine** is the named, recurring (or manual) parent over runs of one
-agent definition — a trigger (or none), a delivery destination, and a run
-history. Routines are set up and managed from inside conversation, not
-from a separate scheduling console: a person names what should happen
-again, on what schedule, and where the result should land. See
-`packages/routines` for the underlying shape.
+A **Routine** is a scheduled workflow — an authored definition whose
+frozen projection carries a native `ScheduleTrigger`. Cadence is set
+from inside conversation, not from a separate scheduling console: a
+person names what should happen again, on what schedule, and where the
+result should land. See `@corbits/workflows` for the schedule/cron
+helpers and the hub's `workflow-scheduler.ts` for the poller. The
+Routines page also offers an Available section (CL-7073): every
+catalog workflow this workbench hasn't added yet, with an Add action
+that deploys it in place — no separate create flow.
 
 ## Inbox and approvals
 
@@ -238,14 +241,14 @@ user-facing surfaces use the rest of the product vocabulary above.
 ## Open questions
 
 - Template-key-only settle (system sender, no agent wake) is shipped;
-  generic `connections/pending` still wakes the asking agent. A leftover
-  agent 401 after GitHub already succeeded is still a first-minute bug
-  — see IMPLEMENTATION.md; do not document that it cannot happen.
-- Connected/settle honesty (no stale Connect after success; settle never
-  posting as the signed-in user; no agent 401 after GitHub already
-  succeeded) stays **target** until CL-6737 and CL-6738 land — see
-  IMPLEMENTATION.md open questions; do not document those guarantees as
-  shipped.
+  generic `connections/pending` still wakes the asking agent.
+- Settle attribution via a synthetic system sender is shipped (CL-6741);
+  `connection.connected` is never posted as the signed-in user. See
+  [docs/connect-cards.md](docs/connect-cards.md).
+- A leftover agent 401 after GitHub already succeeded, and a stale
+  Connect after success, remain first-minute bugs — see
+  [docs/connect-cards.md](docs/connect-cards.md); do not document those
+  as shipped.
 - Live Canva MCP OAuth (sign-in, DCR, and post-OAuth probe against
   Canva's own servers) is not verified; do not document a proven live
   Canva handshake.

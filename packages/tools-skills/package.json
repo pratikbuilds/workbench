@@ -1,8 +1,8 @@
 {
   "name": "@corbits/tools-skills",
   "private": true,
-  "description": "skills_list / skills_search / load_skill as an @intx/agent tool bundle: calls the sanctioned workflow-skills HTTP surface (@corbits/skills) with the sidecar's own bearer token and the run's own address, and fails closed rather than returning an empty registry",
-  "version": "0.0.1",
+  "description": "skills_list / skills_search / skills_load as an @intx/agent tool bundle: calls the sanctioned workflow-skills HTTP surface (@corbits/skills) with the sidecar's own bearer token and the run's own address, and fails closed rather than returning an empty registry",
+  "version": "0.0.2",
   "license": "LGPL-2.1-or-later",
   "type": "module",
   "exports": {

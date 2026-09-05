@@ -24,18 +24,18 @@ import {
   createChatOrchestrator,
   POSTED_APPROVAL_GUARD_TTL_MS,
 } from "../src/chat-orchestrator";
-import {
-  AGENT_TURN_STALE_MS,
-  createInMemoryAgentTurnStore,
-} from "../src/agent-turns";
+import { createInMemoryAgentTurnStore } from "../src/agent-turns";
 import { parseBlock } from "../src/blocks";
 import type { ChatPlatform, ChatWorkbenchEvent } from "../src/platform-port";
 import {
   createInMemoryRoomMessageStore,
+  postRoomMessage,
   type RoomMessage,
   type RoomMessageStore,
 } from "../src/room-messages";
 import type { WorkbenchSettingsRow } from "../src/store";
+import { createInMemoryThreadStore } from "../src/threads";
+import { createInMemoryTurnMailCorrelationStore } from "../src/turn-mail-correlation";
 import type { WorkbenchSubscriberRegistry } from "../src/workbench-events";
 import { createInMemoryWriteClaimStore } from "../src/write-claims";
 
@@ -72,6 +72,9 @@ function fakeRoom(options?: { failPostOnCall: number }) {
     listMessages: store.listMessages,
     getMessage: store.getMessage,
     listActivity: store.listActivity,
+    stampMailMessageId: store.stampMailMessageId,
+    findByMailMessageId: store.findByMailMessageId,
+    deleteMessage: store.deleteMessage,
   };
   const publish: WorkbenchSubscriberRegistry["publish"] = (
     workbenchId,
@@ -732,6 +735,348 @@ describe("createChatOrchestrator", () => {
     orchestrator.dispose();
   });
 
+  // CL-6396: two overlapping running rows for the same (workbench, agent)
+  // used to make `findRunningTurn`'s newest-occurrence pick a coin flip.
+  // A reply that names turn__0 must close that row, never the later one.
+  test("a reply named for turn__0 does not close an overlapping turn__1", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const agentAddress = "ins_echo1@ten1.workbench.test";
+    const first = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress,
+      requestMessageIds: ["msg_0"],
+    });
+    const second = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress,
+      requestMessageIds: ["msg_1"],
+    });
+    expect(first.childRunId).toBe("turn__0");
+    expect(second.childRunId).toBe("turn__1");
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", [agentAddress]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_1",
+      childRunId: "turn__0",
+      event: { type: "connector.reply", data: { content: "first reply" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]).toMatchObject({
+      runId: "turn__0",
+      parts: [{ kind: "text", text: "first reply" }],
+    });
+    expect(
+      (await agentTurns.getTurn({ tenantId: "ten_1", turnId: first.id }))
+        ?.status,
+    ).toBe("completed");
+    expect(
+      (await agentTurns.getTurn({ tenantId: "ten_1", turnId: second.id }))
+        ?.status,
+    ).toBe("running");
+
+    orchestrator.dispose();
+  });
+
+  // CL-6396: a failed-turn notice is the same `postReply` path as a
+  // successful `connector.reply`. Naming turn__0 must close that row
+  // failed, leave the overlapping turn__1 running, and stamp the notice
+  // with turn__0 — never the newest-occurrence pick.
+  test("a failed-turn notice named for turn__0 does not close an overlapping turn__1", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const agentAddress = "ins_echo1@ten1.workbench.test";
+    const first = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress,
+      requestMessageIds: ["msg_0"],
+    });
+    const second = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress,
+      requestMessageIds: ["msg_1"],
+    });
+    expect(first.childRunId).toBe("turn__0");
+    expect(second.childRunId).toBe("turn__1");
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", [agentAddress]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_1",
+      childRunId: "turn__0",
+      event: {
+        type: "message.run.ended",
+        data: { status: "failed", error: { message: "provider timed out" } },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]).toMatchObject({
+      runId: "turn__0",
+      parts: [{ kind: "text", text: "provider timed out" }],
+    });
+    expect(
+      (await agentTurns.getTurn({ tenantId: "ten_1", turnId: first.id }))
+        ?.status,
+    ).toBe("failed");
+    expect(
+      (await agentTurns.getTurn({ tenantId: "ten_1", turnId: second.id }))
+        ?.status,
+    ).toBe("running");
+
+    orchestrator.dispose();
+  });
+
+  // CL-6396: an old sidecar's agent.event frames omit childRunId. The one
+  // documented fallback is newest-occurrence — the later overlapping row
+  // receives the reply, not a spray and not a late-reply invent.
+  test("a reply with no childRunId still finishes the newest overlapping turn", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const agentAddress = "ins_echo1@ten1.workbench.test";
+    const first = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress,
+      requestMessageIds: ["msg_0"],
+    });
+    const second = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress,
+      requestMessageIds: ["msg_1"],
+    });
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", [agentAddress]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_1",
+      event: { type: "connector.reply", data: { content: "legacy reply" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]?.runId).toBe("turn__1");
+    expect(
+      (await agentTurns.getTurn({ tenantId: "ten_1", turnId: first.id }))
+        ?.status,
+    ).toBe("running");
+    expect(
+      (await agentTurns.getTurn({ tenantId: "ten_1", turnId: second.id }))
+        ?.status,
+    ).toBe("completed");
+
+    orchestrator.dispose();
+  });
+
+  // CL-6396: two turns on one sidecar session must not share the
+  // reply-parts accumulator. Turn 0's late `message.run.ended` used to
+  // `take()` the session-keyed bucket after turn 1 had already started
+  // accumulating, swallowing turn 1's structured parts.
+  test("sequential turns on one sessionId with distinct childRunIds do not steal reply-parts", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const agentAddress = "ins_echo1@ten1.workbench.test";
+    const first = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress,
+      requestMessageIds: ["msg_0"],
+    });
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", [agentAddress]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_shared",
+      childRunId: "turn__0",
+      event: {
+        type: "inference.done",
+        data: { turn: { content: [{ type: "text", text: "first thought" }] } },
+      },
+    });
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_shared",
+      childRunId: "turn__0",
+      event: {
+        type: "connector.reply",
+        data: { content: "first thought" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(
+      (await agentTurns.getTurn({ tenantId: "ten_1", turnId: first.id }))
+        ?.status,
+    ).toBe("completed");
+
+    const second = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress,
+      requestMessageIds: ["msg_1"],
+    });
+    expect(second.childRunId).toBe("turn__1");
+
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_shared",
+      childRunId: "turn__1",
+      event: {
+        type: "inference.done",
+        seq: 1,
+        data: {
+          turn: {
+            content: [
+              { type: "text", text: "Let me check that." },
+              {
+                type: "tool_call",
+                id: "call_1",
+                name: "web_search",
+                arguments: { query: "second thought" },
+              },
+            ],
+          },
+        },
+      },
+    });
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_shared",
+      childRunId: "turn__1",
+      event: {
+        type: "tool.done",
+        seq: 2,
+        data: {
+          result: { callId: "call_1", content: "3 results found" },
+        },
+      },
+    });
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_shared",
+      childRunId: "turn__1",
+      event: {
+        type: "inference.done",
+        seq: 3,
+        data: {
+          turn: { content: [{ type: "text", text: "second thought" }] },
+        },
+      },
+    });
+    // Late bracket-close for the first turn, still on the shared session.
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_shared",
+      childRunId: "turn__0",
+      event: {
+        type: "message.run.ended",
+        data: { status: "completed", messageRunId: "mr_0", messageId: "msg_0" },
+      },
+    });
+    events.emit("agent.event", {
+      agentAddress,
+      sessionId: "ses_shared",
+      childRunId: "turn__1",
+      event: {
+        type: "connector.reply",
+        data: { content: "second thought" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(2);
+    expect(room.posted[0]?.parts).toEqual([
+      { kind: "text", text: "first thought" },
+    ]);
+    expect(room.posted[1]?.parts).toEqual([
+      { kind: "text", text: "Let me check that." },
+      {
+        kind: "tool-trace",
+        name: "web_search",
+        input: { query: "second thought" },
+        status: "success",
+        output: "3 results found",
+      },
+      { kind: "text", text: "second thought" },
+    ]);
+    expect(room.posted[1]?.runId).toBe("turn__1");
+    expect(
+      (await agentTurns.getTurn({ tenantId: "ten_1", turnId: second.id }))
+        ?.status,
+    ).toBe("completed");
+
+    orchestrator.dispose();
+  });
+
   // CL-6378: a turn's `inference.done` events already split the model's
   // output into prose and tool calls (see `event-collector.ts`'s
   // `handleInferenceDone`), and `tool.done` resolves each call's
@@ -885,34 +1230,31 @@ describe("createChatOrchestrator", () => {
     orchestrator.dispose();
   });
 
-  test("a delegated specialist's reply threads under the delegating message; the host's own replies stay in main (CL-5879)", async () => {
-    const room = fakeRoom();
-    const assignments: {
-      tenantId: string;
-      workbenchId: string;
-      threadId: string;
-      messageId: string;
-    }[] = [];
-    const openedThreadFor: string[] = [];
-    const events = createSidecarEmitter();
-
-    // `findFoldedRunByAddress` is exercised for real (see this file's
-    // header comment), so this fake answers by call order rather than
-    // inspecting the drizzle `where` expression: the host's own event
-    // resolves first, the delegated specialist's reply second — exactly
-    // the order this test emits them in.
-    const runsByCallOrder = [
-      { id: "ins_myra1", tenantId: "ten_1" },
-      { id: "ins_echo1", tenantId: "ten_1" },
-    ];
-    let dbCallIndex = 0;
+  // CL-6314 helpers. Thread-inheritance tests drive the orchestrator
+  // through the same correlation the production dispatch writes — a
+  // recorded `(mailId -> source message)` row plus the bracket events
+  // naming that mail — against the real in-memory thread and correlation
+  // stores, so every assertion below proves the posted row AND its
+  // membership land in the source message's thread.
+  //
+  // `findFoldedRunByAddress` is exercised for real (see this file's
+  // header comment), so the two-address fake answers by call order
+  // rather than inspecting the drizzle `where` expression: the tests
+  // below await a macrotask between emissions, so resolutions happen in
+  // emission order.
+  function twoRunDb(
+    first: { id: string; tenantId: string },
+    second: { id: string; tenantId: string },
+  ) {
+    const runs = [first, second];
+    let runCallIndex = 0;
     let launchCallIndex = 0;
-    const db = {
+    return {
       query: {
         workflowRun: {
           findFirst: async () => {
-            const run = runsByCallOrder[dbCallIndex];
-            dbCallIndex += 1;
+            const run = runs[runCallIndex];
+            runCallIndex += 1;
             return run === undefined
               ? undefined
               : { ...run, principalId: null };
@@ -923,7 +1265,7 @@ describe("createChatOrchestrator", () => {
         from: () => ({
           where: () => ({
             limit: async () => {
-              const run = runsByCallOrder[launchCallIndex];
+              const run = runs[launchCallIndex];
               launchCallIndex += 1;
               return run === undefined
                 ? []
@@ -933,9 +1275,311 @@ describe("createChatOrchestrator", () => {
         }),
       }),
     };
+  }
 
+  function bracketed(
+    mailId: string,
+    messageRunId: string,
+    domain: string = "ten1.workbench.test",
+  ) {
+    return {
+      started: {
+        type: "message.run.started",
+        data: {
+          messageId: `<${mailId}@${domain}>`,
+          messageRunId,
+          receivedAt: Date.now(),
+        },
+      },
+      ended: {
+        type: "message.run.ended",
+        data: {
+          messageRunId,
+          messageId: `<${mailId}@${domain}>`,
+          status: "completed",
+        },
+      },
+    };
+  }
+
+  test("an agent's reply inherits the thread of the message that woke it (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const events = createSidecarEmitter();
     const orchestrator = createChatOrchestrator({
-      db: db as never,
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads,
+      turnMailCorrelation: turnMail,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    // A human sub-conversation already running in its own thread: a
+    // parent on the root feed, a reply thread under it, the waking
+    // message inside that thread — posted exactly the human path posts
+    // them (row thread id plus membership row).
+    const root = await threads.ensureRootThread("ten_1", "ins_workbench1");
+    const parent = await postRoomMessage(
+      { roomMessages: room.roomMessages, publish: room.publish },
+      {
+        tenantId: "ten_1",
+        workbenchId: "ins_workbench1",
+        sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+        parts: [{ kind: "text", text: "kicking this off" }],
+        threadId: root.id,
+      },
+    );
+    await threads.assignMessage({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      threadId: root.id,
+      messageId: parent.id,
+    });
+    const thread = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parent.id,
+    });
+    const waking = await postRoomMessage(
+      { roomMessages: room.roomMessages, publish: room.publish },
+      {
+        tenantId: "ten_1",
+        workbenchId: "ins_workbench1",
+        sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+        parts: [{ kind: "text", text: "@ins_echo1 what do you think?" }],
+        threadId: thread.id,
+      },
+    );
+    await threads.assignMessage({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      threadId: thread.id,
+      messageId: waking.id,
+    });
+    // What `dispatchTurn` wrote when it delivered the waking message.
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_1",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: waking.id,
+    });
+
+    const bracket = bracketed("mail_1", "mrun_1");
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: bracket.started,
+    });
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "connector.reply",
+        data: { content: "Looks good to me." },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reply = room.posted.find(
+      (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
+    );
+    expect(reply).toMatchObject({ workbenchId: "ins_workbench1" });
+    // The reply's own row carries the thread, and so does its
+    // membership — the read model sees it in the thread either way.
+    expect(reply?.threadId).toBe(thread.id);
+    expect(
+      await threads.threadIdForMessage(
+        "ten_1",
+        "ins_workbench1",
+        reply?.id ?? "",
+      ),
+    ).toBe(thread.id);
+
+    orchestrator.dispose();
+  });
+
+  test("a reply still inherits the waking thread after a restart-shaped new orchestrator with no open bracket (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const poster = { roomMessages: room.roomMessages, publish: room.publish };
+    const parent = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "kicking this off" }],
+    });
+    const thread = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parent.id,
+    });
+    const waking = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "@ins_echo1 what do you think?" }],
+      threadId: thread.id,
+    });
+    await threads.assignMessage({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      threadId: thread.id,
+      messageId: waking.id,
+    });
+    // What `dispatchTurn` wrote — both durable halves, then a brand-new
+    // orchestrator the way the hub would after a restart: empty
+    // `openBrackets`, no replayed `message.run.started`.
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_restart",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: waking.id,
+    });
+    await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      requestMessageIds: [waking.id],
+    });
+
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads,
+      turnMailCorrelation: turnMail,
+      agentTurns,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "connector.reply",
+        data: { content: "Looks good to me." },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reply = room.posted.find(
+      (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
+    );
+    expect(reply?.threadId).toBe(thread.id);
+    expect(
+      await threads.threadIdForMessage(
+        "ten_1",
+        "ins_workbench1",
+        reply?.id ?? "",
+      ),
+    ).toBe(thread.id);
+
+    orchestrator.dispose();
+  });
+
+  test("a reply to a root-thread message resolves to the root thread — the same rule, not a special case (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads,
+      turnMailCorrelation: turnMail,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    const root = await threads.ensureRootThread("ten_1", "ins_workbench1");
+    // A root-feed message carries no membership row — that absence IS
+    // the "root thread" answer, resolved here rather than special-cased.
+    const waking = await postRoomMessage(
+      { roomMessages: room.roomMessages, publish: room.publish },
+      {
+        tenantId: "ten_1",
+        workbenchId: "ins_workbench1",
+        sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+        parts: [{ kind: "text", text: "@ins_echo1 hello" }],
+      },
+    );
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_2",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: waking.id,
+    });
+
+    const bracket = bracketed("mail_2", "mrun_2");
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: bracket.started,
+    });
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "connector.reply",
+        data: { content: "Hello back." },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reply = room.posted.find(
+      (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
+    );
+    expect(reply?.threadId).toBe(root.id);
+    expect(
+      await threads.threadIdForMessage(
+        "ten_1",
+        "ins_workbench1",
+        reply?.id ?? "",
+      ),
+    ).toBe(root.id);
+
+    orchestrator.dispose();
+  });
+
+  test("parallel agent sub-conversations stay in their own threads (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: twoRunDb(
+        { id: "ins_echo1", tenantId: "ten_1" },
+        { id: "ins_myra1", tenantId: "ten_1" },
+      ) as never,
       store: {
         listWorkbenchSettings: async () => [
           workbenchRow("ins_workbench1", [
@@ -947,31 +1591,192 @@ describe("createChatOrchestrator", () => {
       roomMessages: room.roomMessages,
       publish: room.publish,
       platform: fakeMail().platform,
-      threads: {
-        openReplyThread: async (input) => {
-          openedThreadFor.push(input.parentMessageId);
-          return {
-            id: "thr_1",
-            tenantId: input.tenantId,
-            workbenchId: input.workbenchId,
-            kind: "reply",
-            parentMessageId: input.parentMessageId,
-            parentThreadId: "thr_root",
-            runRef: null,
-            title: null,
-            createdAt: new Date(),
-          };
-        },
-        assignMessage: async (input) => {
-          assignments.push(input);
-        },
-      },
+      threads,
+      turnMailCorrelation: turnMail,
       events,
       claims: fakeClaims(),
       approvals: { findByCorrelationId: async () => null },
     });
 
-    // The host (Myra) replies, delegating to the specialist by @mention.
+    const poster = { roomMessages: room.roomMessages, publish: room.publish };
+    const parentOne = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "track one" }],
+    });
+    const parentTwo = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "track two" }],
+    });
+    const threadOne = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parentOne.id,
+    });
+    const threadTwo = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parentTwo.id,
+    });
+    expect(threadOne.id).not.toBe(threadTwo.id);
+    const wakingOne = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "@ins_echo1 track one" }],
+      threadId: threadOne.id,
+    });
+    const wakingTwo = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "@ins_myra1 track two" }],
+      threadId: threadTwo.id,
+    });
+    for (const [threadId, message] of [
+      [threadOne.id, wakingOne],
+      [threadTwo.id, wakingTwo],
+    ] as const) {
+      await threads.assignMessage({
+        tenantId: "ten_1",
+        workbenchId: "ins_workbench1",
+        threadId,
+        messageId: message.id,
+      });
+    }
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_1",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: wakingOne.id,
+    });
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_2",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: wakingTwo.id,
+    });
+
+    const first = bracketed("mail_1", "mrun_1");
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: first.started,
+    });
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: { type: "connector.reply", data: { content: "on track one" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const second = bracketed("mail_2", "mrun_2");
+    events.emit("agent.event", {
+      agentAddress: "ins_myra1@ten1.workbench.test",
+      sessionId: "ses_2",
+      event: second.started,
+    });
+    events.emit("agent.event", {
+      agentAddress: "ins_myra1@ten1.workbench.test",
+      sessionId: "ses_2",
+      event: { type: "connector.reply", data: { content: "on track two" } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const replyOne = room.posted.find(
+      (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
+    );
+    const replyTwo = room.posted.find(
+      (message) => message.sender.address === "ins_myra1@ten1.workbench.test",
+    );
+    // Each reply in its own waking thread — neither spills into the
+    // other's, and neither lands loose on the root feed.
+    expect(replyOne?.threadId).toBe(threadOne.id);
+    expect(replyTwo?.threadId).toBe(threadTwo.id);
+
+    orchestrator.dispose();
+  });
+
+  test("delegation falls out of the general rule: a specialist's reply threads under the delegating message's thread (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const { platform } = fakeMail();
+    const delegationMailIds: string[] = [];
+    const deliverMail = platform.sendMail.bind(platform);
+    platform.sendMail = async (input) => {
+      const sent = await deliverMail(input);
+      delegationMailIds.push(sent.id);
+      return sent;
+    };
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: twoRunDb(
+        { id: "ins_myra1", tenantId: "ten_1" },
+        { id: "ins_echo1", tenantId: "ten_1" },
+      ) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", [
+            "ins_myra1@ten1.workbench.test",
+            "ins_echo1@ten1.workbench.test",
+          ]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform,
+      threads,
+      turnMailCorrelation: turnMail,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    // A human asks the host from inside a thread — the dispatch wrote
+    // that correlation the same way every human mention does.
+    const poster = { roomMessages: room.roomMessages, publish: room.publish };
+    const parent = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "needs a specialist" }],
+    });
+    const thread = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parent.id,
+    });
+    const waking = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "@ins_myra1 can you look?" }],
+      threadId: thread.id,
+    });
+    await threads.assignMessage({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      threadId: thread.id,
+      messageId: waking.id,
+    });
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_human",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: waking.id,
+    });
+
+    // The host replies, delegating to the specialist by @mention.
+    const hostBracket = bracketed("mail_human", "mrun_host");
+    events.emit("agent.event", {
+      agentAddress: "ins_myra1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: hostBracket.started,
+    });
     events.emit("agent.event", {
       agentAddress: "ins_myra1@ten1.workbench.test",
       sessionId: "ses_1",
@@ -982,19 +1787,40 @@ describe("createChatOrchestrator", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // The delegating message is the first one posted into ins_workbench1.
-    const delegatingMessage = room.posted[0];
-    if (delegatingMessage === undefined) {
+    // The host's own reply inherits the waking message's thread — hosts
+    // are not special-cased out of the rule anymore.
+    const delegatingMessage = room.posted.find(
+      (message) => message.sender.address === "ins_myra1@ten1.workbench.test",
+    );
+    expect(delegatingMessage?.threadId).toBe(thread.id);
+    // And the delegation hop recorded its own correlation, keyed by the
+    // mail id it just got back — no in-memory delegation map involved.
+    const delegationMailId = delegationMailIds[0];
+    if (delegationMailId === undefined) {
+      throw new Error("expected the delegation hop to send one mail");
+    }
+    if (delegatingMessage?.id === undefined) {
       throw new Error("expected the host's delegating message to be posted");
     }
-    expect(delegatingMessage).toMatchObject({
+    expect(
+      await turnMail.findTurnMailSource({
+        tenantId: "ten_1",
+        mailId: delegationMailId,
+      }),
+    ).toEqual({
+      tenantId: "ten_1",
       workbenchId: "ins_workbench1",
-      sender: { address: "ins_myra1@ten1.workbench.test" },
+      sourceMessageId: delegatingMessage.id,
     });
-    // No thread assignment yet — only the specialist's own reply threads.
-    expect(assignments).toHaveLength(0);
 
-    // The specialist wakes, does its deep-dive, and replies.
+    // The specialist wakes, does its deep-dive, and replies — inside
+    // the bracket the delegation mail opened for it.
+    const specialistBracket = bracketed(delegationMailId, "mrun_specialist");
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_2",
+      event: specialistBracket.started,
+    });
     events.emit("agent.event", {
       agentAddress: "ins_echo1@ten1.workbench.test",
       sessionId: "ses_2",
@@ -1005,134 +1831,54 @@ describe("createChatOrchestrator", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // The specialist's reply lands in the same main workbench as the host...
+    // The specialist's reply lands in the delegating message's thread —
+    // the same thread, not a new sub-thread opened for the delegation.
     const specialistReply = room.posted.find(
       (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
     );
     expect(specialistReply).toMatchObject({ workbenchId: "ins_workbench1" });
-    // ...but is threaded under the delegating message, not left loose on
-    // the root feed.
-    expect(openedThreadFor).toEqual([delegatingMessage.id]);
-    expect(assignments).toHaveLength(1);
-    expect(assignments[0]).toMatchObject({
-      tenantId: "ten_1",
-      workbenchId: "ins_workbench1",
-      threadId: "thr_1",
-    });
+    expect(specialistReply?.threadId).toBe(thread.id);
+    expect(
+      await threads.threadIdForMessage(
+        "ten_1",
+        "ins_workbench1",
+        specialistReply?.id ?? "",
+      ),
+    ).toBe(thread.id);
+    const listed = await threads.listThreads("ten_1", "ins_workbench1");
+    expect(listed.map((entry) => entry.kind).sort()).toEqual(["reply", "root"]);
 
     orchestrator.dispose();
   });
 
-  // CL-7229: `pendingDelegationThreads` is bounded by `AGENT_TURN_STALE_MS`
-  // rather than growing one entry per delegation for the life of the hub
-  // process. A specialist that never replies (never woke, crashed, or was
-  // mentioned by mistake) has its entry aged out once the rest of the
-  // system would already consider that occurrence stale — an eviction
-  // this test proves happens, and proves is safe: the specialist's reply
-  // still posts (nothing is lost), it simply lands unthreaded instead of
-  // nested under the delegating message.
-  test("a delegation nobody ever replies to is evicted after AGENT_TURN_STALE_MS, not held forever", async () => {
+  test("a reply with no recorded correlation still posts, unthreaded — never lost (CL-6314)", async () => {
     const room = fakeRoom();
-    const openedThreadFor: string[] = [];
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
     const events = createSidecarEmitter();
-    let now = 0;
-
-    // Two distinct addresses resolve in event order (host first,
-    // specialist second) — see the "delegated specialist" test above
-    // for why a single-run `createFakeDb` can't tell them apart.
-    const runsByCallOrder = [
-      { id: "ins_myra1", tenantId: "ten_1" },
-      { id: "ins_echo1", tenantId: "ten_1" },
-    ];
-    let dbCallIndex = 0;
-    let launchCallIndex = 0;
-    const db = {
-      query: {
-        workflowRun: {
-          findFirst: async () => {
-            const run = runsByCallOrder[dbCallIndex];
-            dbCallIndex += 1;
-            return run === undefined
-              ? undefined
-              : { ...run, principalId: null };
-          },
-        },
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
       },
-      select: () => ({
-        from: () => ({
-          where: () => ({
-            limit: async () => {
-              const run = runsByCallOrder[launchCallIndex];
-              launchCallIndex += 1;
-              return run === undefined
-                ? []
-                : [launchRowFor(run.id, run.tenantId)];
-            },
-          }),
-        }),
-      }),
-    };
-
-    const orchestrator = createChatOrchestrator(
-      {
-        db: db as never,
-        store: {
-          listWorkbenchSettings: async () => [
-            workbenchRow("ins_workbench1", [
-              "ins_myra1@ten1.workbench.test",
-              "ins_echo1@ten1.workbench.test",
-            ]),
-          ],
-        },
-        roomMessages: room.roomMessages,
-        publish: room.publish,
-        platform: fakeMail().platform,
-        threads: {
-          openReplyThread: async (input) => {
-            openedThreadFor.push(input.parentMessageId);
-            return {
-              id: "thr_1",
-              tenantId: input.tenantId,
-              workbenchId: input.workbenchId,
-              kind: "reply",
-              parentMessageId: input.parentMessageId,
-              parentThreadId: "thr_root",
-              runRef: null,
-              title: null,
-              createdAt: new Date(),
-            };
-          },
-          assignMessage: async () => {},
-        },
-        events,
-        claims: fakeClaims(),
-        approvals: { findByCorrelationId: async () => null },
-      },
-      { now: () => now },
-    );
-
-    // The host delegates to the specialist by @mention.
-    events.emit("agent.event", {
-      agentAddress: "ins_myra1@ten1.workbench.test",
-      sessionId: "ses_1",
-      event: {
-        type: "connector.reply",
-        data: { content: "@ins_echo1 can you take this one" },
-      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads,
+      turnMailCorrelation: turnMail,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(room.posted).toHaveLength(1);
 
-    // The specialist never wakes up. Time passes well beyond
-    // `AGENT_TURN_STALE_MS` — the rest of the system has already given
-    // up on that occurrence ever finishing. `createExpiringMap` evicts
-    // lazily, so the entry is gone the moment anything next reads it.
-    now += AGENT_TURN_STALE_MS + 1;
-
-    // The specialist finally does reply, long after being abandoned.
+    // No bracket, no correlation row, no running turn — a mail this
+    // process never dispatched (a pre-rollout mail): the reply still
+    // posts, exactly as before threads.
     events.emit("agent.event", {
       agentAddress: "ins_echo1@ten1.workbench.test",
-      sessionId: "ses_2",
+      sessionId: "ses_1",
       event: {
         type: "connector.reply",
         data: { content: "Sorry for the wait — filed the ticket." },
@@ -1140,14 +1886,96 @@ describe("createChatOrchestrator", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // The reply is never lost — it still posts...
-    const specialistReply = room.posted.find(
+    const reply = room.posted.find(
       (message) => message.sender.address === "ins_echo1@ten1.workbench.test",
     );
-    expect(specialistReply).toMatchObject({ workbenchId: "ins_workbench1" });
-    // ...but the evicted entry means it's no longer threaded under the
-    // (long-abandoned) delegating message.
-    expect(openedThreadFor).toHaveLength(0);
+    expect(reply).toMatchObject({ workbenchId: "ins_workbench1" });
+    expect(reply?.threadId).toBeNull();
+    expect(
+      await threads.threadIdForMessage(
+        "ten_1",
+        "ins_workbench1",
+        reply?.id ?? "",
+      ),
+    ).toBeUndefined();
+
+    orchestrator.dispose();
+  });
+
+  test("a silent turn's notice inherits the thread of the message that woke it (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads,
+      turnMailCorrelation: turnMail,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    const poster = { roomMessages: room.roomMessages, publish: room.publish };
+    const parent = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "still there?" }],
+    });
+    const thread = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parent.id,
+    });
+    const waking = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "@ins_echo1 are you still there?" }],
+      threadId: thread.id,
+    });
+    await threads.assignMessage({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      threadId: thread.id,
+      messageId: waking.id,
+    });
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_9",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: waking.id,
+    });
+
+    // The turn ends with no `connector.reply` this process ever saw —
+    // the bracket close names the waking mail, so the honest notice
+    // lands where a reply would have.
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "message.run.ended",
+        data: {
+          messageRunId: "mrun_9",
+          messageId: "<mail_9@ten1.workbench.test>",
+          status: "completed",
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(3);
+    const notice = room.posted[room.posted.length - 1];
+    expect(notice?.threadId).toBe(thread.id);
 
     orchestrator.dispose();
   });
@@ -1291,7 +2119,7 @@ describe("createChatOrchestrator", () => {
     orchestrator.dispose();
   });
 
-  test("message.run.ended posts the extracted error text for a failed turn", async () => {
+  test("message.run.ended posts a failed-turn notice for a failed turn, not a raw dump bubble", async () => {
     const room = fakeRoom();
     const events = createSidecarEmitter();
     const orchestrator = createChatOrchestrator({
@@ -1321,8 +2149,154 @@ describe("createChatOrchestrator", () => {
 
     expect(room.posted).toHaveLength(1);
     expect(room.posted[0]?.parts).toEqual([
-      { kind: "text", text: "provider timed out" },
+      { kind: "text", text: "provider timed out", turnFailed: true },
     ]);
+
+    orchestrator.dispose();
+  });
+
+  test("message.run.ended classifies a tools-unsupported failure as a failed-turn notice", async () => {
+    const room = fakeRoom();
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "message.run.ended",
+        data: {
+          status: "failed",
+          error: {
+            message:
+              "This agent could not complete your request due to an unrecoverable inference error [HTTP 400]: 'tools' is not supported with this model.",
+          },
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]?.parts).toEqual([
+      {
+        kind: "text",
+        text: "This agent's model can't use tools.",
+        turnFailed: true,
+        turnFailedReason: "tools_unsupported",
+      },
+    ]);
+    const postedText = (room.posted[0]?.parts[0] as { text: string }).text;
+    expect(postedText).not.toMatch(/HTTP/i);
+    expect(postedText).not.toContain("unrecoverable inference error");
+    expect(postedText).not.toContain("not supported with this model");
+
+    orchestrator.dispose();
+  });
+
+  test("a connector.reply that is a tools-unsupported dump becomes a failed-turn notice, not a bubble", async () => {
+    const room = fakeRoom();
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "connector.reply",
+        data: {
+          content:
+            "This agent could not complete your request due to an unrecoverable inference error [HTTP 400]: 'tools' is not supported with this model.",
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]?.parts).toEqual([
+      {
+        kind: "text",
+        text: "This agent's model can't use tools.",
+        turnFailed: true,
+        turnFailedReason: "tools_unsupported",
+      },
+    ]);
+
+    orchestrator.dispose();
+  });
+
+  test("a connector.reply of ordinary tool-not-supported prose stays completed with original text", async () => {
+    const room = fakeRoom();
+    const agentTurns = createInMemoryAgentTurnStore();
+    await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      requestMessageIds: ["msg_1"],
+    });
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      events,
+      agentTurns,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => null },
+    });
+
+    const original = "The grep tool is not supported in this sandbox.";
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "connector.reply",
+        data: { content: original },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(1);
+    expect(room.posted[0]?.parts).toEqual([{ kind: "text", text: original }]);
+    const [settled] = await agentTurns.listTurns({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+    });
+    expect(settled).toMatchObject({
+      status: "completed",
+      replyMessageId: room.posted[0]?.id,
+    });
 
     orchestrator.dispose();
   });
@@ -1468,6 +2442,182 @@ describe("createChatOrchestrator", () => {
       type: "approve",
       data: { approvalId: "apr_1", title: "Post to Slack" },
     });
+
+    orchestrator.dispose();
+  });
+
+  test("an approve block threads under the turn that produced it (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads,
+      turnMailCorrelation: turnMail,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => approvalRow() },
+    });
+
+    const poster = { roomMessages: room.roomMessages, publish: room.publish };
+    const parent = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "ship it" }],
+    });
+    const thread = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parent.id,
+    });
+    const waking = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "@ins_echo1 ship it" }],
+      threadId: thread.id,
+    });
+    await threads.assignMessage({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      threadId: thread.id,
+      messageId: waking.id,
+    });
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_7",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: waking.id,
+    });
+
+    // The approval gate parks mid-turn — inside the waking mail's open
+    // bracket — so the card lands in the turn's own thread.
+    const bracket = bracketed("mail_7", "mrun_7");
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: bracket.started,
+    });
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "reactor.gate.blocked",
+        data: { reason: "approval", gateId: "gate_1", correlationId: "cor_1" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(3);
+    const card = room.posted[room.posted.length - 1];
+    const parts = card?.parts ?? [];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.kind).toBe("block");
+    expect(card?.threadId).toBe(thread.id);
+    expect(
+      await threads.threadIdForMessage(
+        "ten_1",
+        "ins_workbench1",
+        card?.id ?? "",
+      ),
+    ).toBe(thread.id);
+
+    orchestrator.dispose();
+  });
+
+  test("an approve block still threads after a restart-shaped new orchestrator with no open bracket (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const poster = { roomMessages: room.roomMessages, publish: room.publish };
+    const parent = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "ship it" }],
+    });
+    const thread = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parent.id,
+    });
+    const waking = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "@ins_echo1 ship it" }],
+      threadId: thread.id,
+    });
+    await threads.assignMessage({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      threadId: thread.id,
+      messageId: waking.id,
+    });
+    await turnMail.recordTurnMail({
+      tenantId: "ten_1",
+      mailId: "mail_restart_approve",
+      workbenchId: "ins_workbench1",
+      sourceMessageId: waking.id,
+    });
+    await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      requestMessageIds: [waking.id],
+    });
+
+    const events = createSidecarEmitter();
+    const orchestrator = createChatOrchestrator({
+      db: createFakeDb({ id: "ins_echo1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["ins_echo1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      threads,
+      turnMailCorrelation: turnMail,
+      agentTurns,
+      events,
+      claims: fakeClaims(),
+      approvals: { findByCorrelationId: async () => approvalRow() },
+    });
+
+    events.emit("agent.event", {
+      agentAddress: "ins_echo1@ten1.workbench.test",
+      sessionId: "ses_1",
+      event: {
+        type: "reactor.gate.blocked",
+        data: { reason: "approval", gateId: "gate_1", correlationId: "cor_1" },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const card = room.posted.find((message) =>
+      message.parts.some((part) => part.kind === "block"),
+    );
+    expect(card?.threadId).toBe(thread.id);
+    expect(
+      await threads.threadIdForMessage(
+        "ten_1",
+        "ins_workbench1",
+        card?.id ?? "",
+      ),
+    ).toBe(thread.id);
 
     orchestrator.dispose();
   });
@@ -1711,6 +2861,99 @@ describe("createArtifactDeliveryHandler", () => {
         artifactId: "art_1",
       },
     ]);
+  });
+
+  test("a finalized turn's artifacts thread under the turn that produced them (CL-6314)", async () => {
+    const room = fakeRoom();
+    const threads = createInMemoryThreadStore();
+    const agentTurns = createInMemoryAgentTurnStore();
+    const handler = createArtifactDeliveryHandler({
+      approvals: { findByCorrelationId: async () => null },
+      db: createFakeDb({ id: "run_1", tenantId: "ten_1" }) as never,
+      store: {
+        listWorkbenchSettings: async () => [
+          workbenchRow("ins_workbench1", ["run_1@ten1.workbench.test"]),
+        ],
+      },
+      roomMessages: room.roomMessages,
+      publish: room.publish,
+      platform: fakeMail().platform,
+      events: createSidecarEmitter(),
+      claims: fakeClaims(),
+      agentTurns,
+      threads,
+    });
+
+    const poster = { roomMessages: room.roomMessages, publish: room.publish };
+    const parent = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "make notes" }],
+    });
+    const thread = await threads.openReplyThread({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      parentMessageId: parent.id,
+    });
+    const waking = await postRoomMessage(poster, {
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      sender: { name: "Alice", address: "alice@ten1.workbench.test" },
+      parts: [{ kind: "text", text: "@run_1 make notes" }],
+      threadId: thread.id,
+    });
+    await threads.assignMessage({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      threadId: thread.id,
+      messageId: waking.id,
+    });
+    // The turn the dispatch seam opened for the waking message.
+    const turn = await agentTurns.startTurn({
+      tenantId: "ten_1",
+      workbenchId: "ins_workbench1",
+      agentAddress: "run_1@ten1.workbench.test",
+      requestMessageIds: [waking.id],
+    });
+
+    handler("run_1@ten1.workbench.test", {
+      turnId: turn.id,
+      errors: [],
+      toolCalls: [
+        {
+          isError: false,
+          result: JSON.stringify({
+            id: "art_1",
+            version: 1,
+            title: "Notes",
+            kind: "text",
+            persisted: true,
+          }),
+        },
+      ],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(room.posted).toHaveLength(3);
+    const delivery = room.posted[room.posted.length - 1];
+    expect(delivery?.parts).toEqual([
+      {
+        kind: "file",
+        name: "Notes",
+        mediaType: "text/plain",
+        artifactId: "art_1",
+      },
+    ]);
+    expect(delivery?.threadId).toBe(thread.id);
+    expect(
+      await threads.threadIdForMessage(
+        "ten_1",
+        "ins_workbench1",
+        delivery?.id ?? "",
+      ),
+    ).toBe(thread.id);
   });
 
   test("sends nothing when the turn's tool calls name no persisted artifact", async () => {

@@ -39,7 +39,6 @@ import {
 import { applyWebhookTriggersMigrations } from "../packages/webhook-triggers/src/migrations";
 import { reconcileDuplicateRepoGrants } from "../packages/connections/src/reconcile-duplicate-repo-grants";
 import { applyNotifyMigrations } from "../packages/notify/src/migrations";
-import { applyRoutineMigrations } from "../packages/routines/src/migrations";
 import {
   applyInboxMigrations,
   applyMailboxMigrations,
@@ -77,7 +76,6 @@ const INSTALLED_PACKAGE_MIGRATIONS: readonly {
   { name: "@corbits/folded-runs", apply: applyFoldedRunsMigrations },
   { name: "@corbits/chat", apply: applyChatMigrations },
   { name: "@corbits/webhook-triggers", apply: applyWebhookTriggersMigrations },
-  { name: "@corbits/routines", apply: applyRoutineMigrations },
   { name: "@corbits/notify", apply: applyNotifyMigrations },
   { name: "@corbits/mailbox", apply: applyMailboxMigrations },
   // CL-7208's snooze-until table, own schema — see packages/inbox/src/schema.ts.
@@ -143,6 +141,8 @@ async function applyInstalledPackageMigrations(
         removedIds.join(", "),
     );
   }
+
+  await dropRoutinesSchemaAfterDigestHandoff(databaseUrl);
 }
 
 /**
@@ -438,6 +438,39 @@ async function tableExists(
     [schema, table],
   );
   return rows.length > 0;
+}
+
+/**
+ * One-shot: if a leftover `routines` schema is still present, enable the
+ * authored workbench-digest definition for tenants whose digest routine
+ * was on, then drop the schema. Absent schema is a no-op. Safe to re-run.
+ *
+ * `updated_at = now()` is load-bearing: seed treats `createdAt === updatedAt`
+ * as pristine and PUTs `stopped`. Copying enablement without bumping
+ * `updated_at` would look untouched and get re-archived on the next seed.
+ */
+export const DIGEST_HANDOFF_SQL = `UPDATE workflow_definition wd SET status = CASE WHEN r.enabled THEN 'deployed' ELSE 'stopped' END, updated_at = now() FROM routines.routine r WHERE r.preset_key = 'workbench-digest' AND wd.name = 'workbench-digest' AND wd.tenant_id = r.tenant_id AND wd.origin = 'authored'`;
+
+async function dropRoutinesSchemaAfterDigestHandoff(
+  databaseUrl: string,
+): Promise<void> {
+  const postgres = await loadPostgres();
+  const target = dbTargetFromUrl(databaseUrl);
+  const sql = await connect(postgres, target);
+  try {
+    const existing = await sql.unsafe(
+      "SELECT 1 FROM information_schema.schemata WHERE schema_name = $1",
+      ["routines"],
+    );
+    if (existing.length === 0) return;
+    await sql.unsafe(DIGEST_HANDOFF_SQL);
+    await sql.unsafe("DROP SCHEMA IF EXISTS routines CASCADE");
+    console.log(
+      "db-setup: dropped routines schema after digest enablement handoff",
+    );
+  } finally {
+    await sql.end();
+  }
 }
 
 async function appliedMigrations(

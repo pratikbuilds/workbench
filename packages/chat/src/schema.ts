@@ -175,6 +175,14 @@ export const workbenchMessages = chatSchema.table(
     senderPrincipalId: text("sender_principal_id"),
     runId: text("run_id"),
     threadId: text("thread_id"),
+    /**
+     * The RFC 5322 `Message-ID` this row went out as when it was
+     * dispatched to an agent (CL-7104) — `<id@domain>`, derived from the
+     * row's own primary key and stamped once at dispatch. Null for a row
+     * that was never dispatched as mail (a join notice, an event, a
+     * message nobody was asked to answer).
+     */
+    mailMessageId: text("mail_message_id"),
     parts: jsonb("parts").notNull(),
     // Millisecond precision, not the default microsecond: a cursor is a
     // JS `Date` rendered to an ISO string, which carries milliseconds
@@ -504,6 +512,32 @@ export const finalizedTurnWriteClaim = chatSchema.table(
   (table) => [
     primaryKey({
       columns: [table.tenantId, table.surface, table.claimKey],
+    }),
+  ],
+);
+
+/**
+ * Which workbench message a dispatch mail answers (CL-6314): written by
+ * the dispatch seam right after its send resolves, read by the reply
+ * path when the agent's `message.run.started` bracket names that mail.
+ * Insert-only — a second record for the same mail is a no-op (see
+ * `turn-mail-correlation.ts`), so the primary key is the whole dedup
+ * story and this table needs no other index.
+ */
+export const turnMailCorrelation = chatSchema.table(
+  "turn_mail_correlation",
+  {
+    tenantId: text("tenant_id").notNull(),
+    mailId: text("mail_id").notNull(),
+    workbenchId: text("workbench_id").notNull(),
+    sourceMessageId: text("source_message_id").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.mailId],
     }),
   ],
 );

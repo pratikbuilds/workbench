@@ -17,7 +17,7 @@
     "@corbits/error-sink": "workspace:*",
     "@corbits/memory": "github:corbitsdev/corbits-memory#9e6f213fa2c002b531d3f6af1aa0abd737b8afe3",
     "arktype": "catalog:",
-    "hono": "^4.11.9"
+    "hono": "catalog:"
   },
   "devDependencies": {
     "@types/bun": "catalog:",

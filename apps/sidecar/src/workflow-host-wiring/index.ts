@@ -444,6 +444,7 @@ export function createSidecarDeployRouter(deps: {
     agentAddress: string,
     event: InferenceEvent,
     sessionId: string | undefined,
+    childRunId?: string,
   ) => void;
   /**
    * Optional override for the multi-step branch's per-step mail-address
@@ -617,6 +618,7 @@ export function createSidecarDeployRouter(deps: {
       _address: string,
       _event: InferenceEvent,
       _sessionId: string | undefined,
+      _childRunId?: string,
     ): void => {
       /* no-op default: tests and production-without-a-publisher
          deployments do not consume events. */
@@ -1081,7 +1083,7 @@ export function createSidecarDeployRouter(deps: {
         stepOrder,
         definitionHash,
         warmKeep,
-        onInferenceEvent: (event) => {
+        onInferenceEvent: (event, childRunId) => {
           // The event arrives HMAC-verified over the child's event channel.
           // Re-narrow it to the hub's `InferenceEvent` union; a parse
           // failure means upstream corruption, so drop it loudly rather
@@ -1091,7 +1093,12 @@ export function createSidecarDeployRouter(deps: {
             logger.warn`dropping workflow inference event for ${spec.agentAddress}: ${validated.summary}`;
             return;
           }
-          publishInferenceEvent(spec.agentAddress, validated, spec.sessionId);
+          publishInferenceEvent(
+            spec.agentAddress,
+            validated,
+            spec.sessionId,
+            childRunId,
+          );
         },
       };
 

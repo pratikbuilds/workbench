@@ -18,7 +18,11 @@ import type {
   BuiltRequest,
   ProviderAdapter,
 } from "@intx/inference";
-import type { LastCycleSource } from "@intx/types/runtime";
+import type {
+  InferenceEvent,
+  LastCycleSource,
+  TokenUsage,
+} from "@intx/types/runtime";
 
 import {
   parseOllamaAdapterConfig,
@@ -38,20 +42,18 @@ type OllamaChatBody = {
   max_tokens?: number;
   max_completion_tokens?: number;
   reasoning_effort?: string;
+  stream_options?: { include_usage: boolean };
 };
 
 function applyOverride(
   built: BuiltRequest,
   override: OllamaAdapterOverride,
 ): BuiltRequest {
-  if (
-    override.numCtx === undefined &&
-    override.maxOutputTokens === undefined &&
-    override.reasoningEffort === undefined
-  ) {
-    return built;
-  }
   const body = JSON.parse(built.body) as OllamaChatBody;
+  // Without include_usage, Ollama's OpenAI-compat stream often ends with no
+  // usage object; the harness then synthesizes zero token counts that Insights
+  // used to display as Cost $0.00 / 0/0 (CL-6659).
+  body.stream_options = { include_usage: true };
   if (override.numCtx !== undefined) {
     body.options = { ...body.options, num_ctx: override.numCtx };
   }
@@ -69,6 +71,81 @@ function applyOverride(
     body.reasoning_effort = override.reasoningEffort;
   }
   return { ...built, body: JSON.stringify(body) };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asNonNegativeInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function openaiShapedUsage(value: unknown): TokenUsage | null {
+  if (!isPlainObject(value)) return null;
+  const input = asNonNegativeInt(value["prompt_tokens"]);
+  const output = asNonNegativeInt(value["completion_tokens"]);
+  if (input === null && output === null) return null;
+  const details = value["prompt_tokens_details"];
+  const completionDetails = value["completion_tokens_details"];
+  const cacheRead = isPlainObject(details)
+    ? asNonNegativeInt(details["cached_tokens"])
+    : null;
+  const thinking = isPlainObject(completionDetails)
+    ? asNonNegativeInt(completionDetails["reasoning_tokens"])
+    : null;
+  return {
+    input: input ?? 0,
+    output: output ?? 0,
+    cacheRead: cacheRead ?? 0,
+    cacheWrite: 0,
+    thinking: thinking ?? 0,
+  };
+}
+
+function ollamaTokenUsageFromChunk(raw: string): TokenUsage | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPlainObject(parsed)) return null;
+    const fromUsage = openaiShapedUsage(parsed["usage"]);
+    if (fromUsage !== null) return fromUsage;
+    const input = asNonNegativeInt(parsed["prompt_eval_count"]);
+    const output = asNonNegativeInt(parsed["eval_count"]);
+    if (input === null && output === null) return null;
+    return {
+      input: input ?? 0,
+      output: output ?? 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      thinking: 0,
+    };
+  } catch {
+    // report-error-ignore: a non-JSON SSE chunk is the common case, not a
+    // failure — this function is "usage if present", never an error path.
+    return null;
+  }
+}
+
+function withOllamaUsage(
+  events: readonly InferenceEvent[],
+  raw: string,
+  source: LastCycleSource,
+): InferenceEvent[] {
+  if (events.some((event) => event.type === "inference.usage")) {
+    return [...events];
+  }
+  const usage = ollamaTokenUsageFromChunk(raw);
+  if (usage === null) return [...events];
+  return [
+    ...events,
+    {
+      type: "inference.usage",
+      seq: 0,
+      data: { usage, source },
+    },
+  ];
 }
 
 /**
@@ -104,19 +181,30 @@ export const createOllamaAdapter: AdapterFactory = (
       );
     },
     parseResponse: (sseData) =>
-      reclassifyInlineToolJsonEvents(
-        reclassifyThinkingEvents(
-          inner.parseResponse(sseData),
-          streamThinkState,
+      withOllamaUsage(
+        reclassifyInlineToolJsonEvents(
+          reclassifyThinkingEvents(
+            inner.parseResponse(sseData),
+            streamThinkState,
+          ),
+          streamInlineState,
+          { flush: responseChunkIsTerminal(sseData) },
         ),
-        streamInlineState,
-        { flush: responseChunkIsTerminal(sseData) },
+        sseData,
+        source,
       ),
     parseJSONResponse: (body) =>
-      reclassifyInlineToolJsonEvents(
-        reclassifyThinkingEvents(inner.parseJSONResponse(body), jsonThinkState),
-        jsonInlineState,
-        { flush: true },
+      withOllamaUsage(
+        reclassifyInlineToolJsonEvents(
+          reclassifyThinkingEvents(
+            inner.parseJSONResponse(body),
+            jsonThinkState,
+          ),
+          jsonInlineState,
+          { flush: true },
+        ),
+        body,
+        source,
       ),
   };
 };

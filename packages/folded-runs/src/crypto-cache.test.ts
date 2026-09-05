@@ -61,4 +61,28 @@ describe("createCryptoProviderCache", () => {
     expect(a).not.toBe(b);
     expect(a.getPublicKey()).not.toEqual(b.getPublicKey());
   });
+
+  test("independent caches mint different providers for the same key", async () => {
+    const first = createCryptoProviderCache();
+    const second = createCryptoProviderCache();
+
+    const a = await first.get("run_same");
+    const b = await second.get("run_same");
+
+    expect(a).not.toBe(b);
+    expect(a.getPublicKey()).not.toEqual(b.getPublicKey());
+  });
+
+  test("one shared cache returns the same provider to every consumer of a key", async () => {
+    const cache = createCryptoProviderCache();
+
+    const chat = await cache.get("run_same");
+    const webhook = await cache.get("run_same");
+    const routine = await cache.get("run_same");
+    const drafting = await cache.get("run_same");
+
+    expect(webhook).toBe(chat);
+    expect(routine).toBe(chat);
+    expect(drafting).toBe(chat);
+  });
 });

@@ -7,9 +7,9 @@
 //    still waiting, or `dispatchTurn`'s `sendMail` still in flight) --
 //    the cancellation registry's `AbortSignal` cuts it short directly.
 // 2. The turn's dispatch has already resolved and moved off our call
-//    stack entirely (the agent is generating, or parked on a
-//    `message_response` gate somewhere in the execution plane this
-//    package has no visibility into) -- `cancelWorkbenchTurn`'s sweep
+//    stack entirely (the agent is generating, or parked on an approval
+//    gate somewhere in the execution plane this package has no
+//    visibility into) -- `cancelWorkbenchTurn`'s sweep
 //    is the only thing left that can settle the row, per CL-7230's
 //    ceiling: it can record the outcome, not stop the underlying work.
 import { describe, expect, test } from "bun:test";

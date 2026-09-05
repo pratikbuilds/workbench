@@ -327,7 +327,6 @@ test("runEval fires a fire-webhook step against the snapshot's enabled trigger",
       return {
         capturedAt: new Date().toISOString(),
         agentDefinitions: [],
-        routines: [],
         connections: [],
         webhookTriggers: [
           {

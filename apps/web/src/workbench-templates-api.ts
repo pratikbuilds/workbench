@@ -13,6 +13,7 @@ import {
   type WorkbenchDefinition,
 } from "@workbench/templates";
 import { ApiQueryError } from "@corbits/api-query";
+import { parseErrorEnvelope } from "@corbits/error-sink";
 
 const TemplateLibraryEntry = type({ id: "string > 0", content: "string > 0" });
 
@@ -51,16 +52,17 @@ export async function deployWorkbenchTemplateBlock(
       path,
     );
   }
+  const json: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
+    const envelope = parseErrorEnvelope(json);
     throw new ApiQueryError(
-      `The server answered ${response.status}.`,
+      envelope?.error.userMessage ?? `The server answered ${response.status}.`,
       response.status,
       path,
+      envelope?.error.refId,
     );
   }
-  const parsed = TemplateBlockDeployResponse(
-    await response.json().catch(() => undefined),
-  );
+  const parsed = TemplateBlockDeployResponse(json);
   if (parsed instanceof type.errors) {
     throw new ApiQueryError(
       `Couldn't set that up — the answer didn't look right: ${parsed.summary}`,

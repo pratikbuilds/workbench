@@ -18,7 +18,7 @@
     "@corbits/error-sink": "workspace:*",
     "@intx/hub-api": "workspace:*",
     "arktype": "catalog:",
-    "hono": "^4.11.9",
+    "hono": "catalog:",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.32"
   },

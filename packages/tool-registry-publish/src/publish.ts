@@ -12,7 +12,13 @@ import { type, type Type } from "arktype";
 import { checkToolPackageFreshness } from "./freshness-check";
 import { materializePackages } from "./materialize";
 import { packToolPackageTarball, type PackedTarball } from "./pack";
-import { CORBITS_TOOL_PACKAGE_DIRS, CORBITS_TOOLS_REGISTRY } from "./registry";
+import {
+  CORBITS_TOOL_PACKAGE_DIRS,
+  CORBITS_TOOLS_REGISTRY,
+  REQUIRED_SEED_TOOL_PACKAGES,
+  tarballCoversPackage,
+  tarballsCoverRequiredSeedPackages,
+} from "./registry";
 
 export type ApiResult = { status: number; data: unknown; cookies: string[] };
 
@@ -146,6 +152,30 @@ export class TarballVersionCollisionError extends Error {
 }
 
 /**
+ * Thrown when a publish run leaves `corbits-tools` without the required
+ * seed tarballs (`@corbits/memory-tools`). Covers both zero uploads onto
+ * an empty/dangling registry (`GET tarballs` → `[]`) and a partial run
+ * that uploaded other packages but still cannot resolve first-launch
+ * pins. Callers must not treat this as success.
+ */
+export class EmptyRegistryPublishError extends Error {
+  readonly success = false as const;
+  constructor(detail: {
+    uploaded: readonly string[];
+    missing: readonly string[];
+  }) {
+    const uploadedBit =
+      detail.uploaded.length === 0
+        ? "uploaded none"
+        : `uploaded ${detail.uploaded.join(", ")}`;
+    super(
+      `publishCorbitsToolsRegistry: the ${CORBITS_TOOLS_REGISTRY} registry is missing the expected tool-package tarballs (${uploadedBit}; still missing ${detail.missing.join(", ")})`,
+    );
+    this.name = "EmptyRegistryPublishError";
+  }
+}
+
+/**
  * Guard against publishing a tarball whose filename (hence its
  * `name@version`) already exists in the registry with different
  * bytes. Same filename + same content is a harmless no-op re-publish
@@ -194,13 +224,69 @@ async function listExistingTarballs(
   return new Map(rows.map((row) => [row.filename, row.integrity]));
 }
 
+/**
+ * Whether this tenant can already resolve the seeded `@corbits/*-tools`
+ * tarballs — locally or inherited. Read-only: it never creates an
+ * asset. An existing `corbits-tools` row with `GET tarballs` → `[]` is
+ * not seeded (the dangling git-init-no-commit case).
+ */
+export async function isCorbitsToolsRegistrySeeded(
+  api: ApiCall,
+  cookies: string[],
+  tenantId: string,
+): Promise<boolean> {
+  const listed = await api(
+    "GET",
+    `/api/tenants/${tenantId}/assets?kind=package-registry&inherited=true`,
+    undefined,
+    cookies,
+  );
+  if (listed.status !== 200) {
+    throw new Error(
+      `publishCorbitsToolsRegistry: failed to list assets: ${String(listed.status)}`,
+    );
+  }
+  const rows = parseSchema(
+    AssetWithOriginResponse.array(),
+    listed.data,
+    "list assets response",
+  );
+  const local = rows.find(
+    (row) => row.name === CORBITS_TOOLS_REGISTRY && row.origin.direct,
+  );
+  const inherited = rows.find((row) => row.name === CORBITS_TOOLS_REGISTRY);
+  const asset = local ?? inherited;
+  if (asset === undefined) return false;
+
+  const tarballs = await api(
+    "GET",
+    `/api/tenants/${tenantId}/assets/${asset.id}/tarballs`,
+    undefined,
+    cookies,
+  );
+  if (tarballs.status !== 200) return false;
+  const tarballRows = parseSchema(
+    TarballListResponse,
+    tarballs.data,
+    "list tarballs response",
+  );
+  return tarballsCoverRequiredSeedPackages(
+    tarballRows.map((row) => row.filename),
+  );
+}
+
+export type FetchTarballPut = (
+  input: string,
+  init: RequestInit,
+) => Promise<Response>;
+
 async function putTarball(
   hubUrl: string,
   cookies: string[],
   tenantId: string,
   assetId: string,
   tarball: PackedTarball,
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchTarballPut,
 ): Promise<PublishSummary> {
   const headers: Record<string, string> = {
     "Content-Type": "application/octet-stream",
@@ -234,49 +320,75 @@ export type PublishCorbitsToolsRegistryArgs = {
   cookies: string[];
   hubUrl: string;
   tenantId: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchTarballPut;
   log?: (line: string) => void;
+  /** Test seam. Production omits this and runs `checkToolPackageFreshness`. */
+  checkFreshness?: () => Promise<void>;
+  /** Test seam. Production omits this and packs `CORBITS_TOOL_PACKAGE_DIRS`. */
+  packageDirs?: readonly string[];
+  /** Test seam. Production omits this and uses `packToolPackageTarball`. */
+  pack?: (packageDir: string) => Promise<PackedTarball>;
+};
+
+function missingRequiredSeedPackages(filenames: readonly string[]): string[] {
+  return REQUIRED_SEED_TOOL_PACKAGES.filter(
+    (name) =>
+      !filenames.some((filename) => tarballCoversPackage(filename, name)),
+  );
+}
+
+export type PublishCorbitsToolsRegistryResult = {
+  success: boolean;
+  summaries: PublishSummary[];
 };
 
 /**
  * Ensures the tenant's `corbits-tools` package-registry asset exists
  * and carries every package in `CORBITS_TOOL_PACKAGE_DIRS`, packing
- * and pushing whatever is missing. `workbench setup` calls this onto
- * the root tenant so descendants inherit tarballs; it is not a
- * signup/seed side effect. Freshness is owned here: `src/` that moved
- * without a version bump fails this publish, not bench create.
+ * and pushing whatever is missing. Packs before creating the asset so
+ * a failed pack cannot leave a dangling git-init-no-commit row.
+ * Zero uploads onto a registry that still lacks the required tarballs
+ * throw `EmptyRegistryPublishError` (`success === false`) instead of
+ * reporting success.
  */
 export async function publishCorbitsToolsRegistry(
   args: PublishCorbitsToolsRegistryArgs,
-): Promise<PublishSummary[]> {
+): Promise<PublishCorbitsToolsRegistryResult> {
   const fetchImpl = args.fetchImpl ?? fetch;
   const log = args.log ?? ((): void => undefined);
+  const checkFreshness = args.checkFreshness ?? checkToolPackageFreshness;
+  const packageDirs = args.packageDirs ?? CORBITS_TOOL_PACKAGE_DIRS;
+  const pack = args.pack ?? packToolPackageTarball;
 
   // Fail before packing if any `@corbits/*-tools` src/ moved without a
   // version bump. Publish skips an already-present filename, so a forgotten
   // bump would otherwise ship nothing and leave running agents on old tools.
-  await checkToolPackageFreshness();
+  await checkFreshness();
 
-  const assetId = await ensureRegistryAsset(
+  const existingId = await listRegistryAsset(
     args.api,
     args.cookies,
     args.tenantId,
   );
-  const existingIntegrityByFilename = await listExistingTarballs(
-    args.api,
-    args.cookies,
-    args.tenantId,
-    assetId,
-  );
+  const existingIntegrityByFilename =
+    existingId !== undefined
+      ? await listExistingTarballs(
+          args.api,
+          args.cookies,
+          args.tenantId,
+          existingId,
+        )
+      : new Map<string, string>();
 
   // Packs are independent; PUTs stay serial because they mutate one
-  // package-registry git asset.
+  // package-registry git asset. Pack before ensure-create so a pack
+  // failure cannot leave a dangling empty registry row.
   const packed = await materializePackages({
-    packageDirs: CORBITS_TOOL_PACKAGE_DIRS,
-    materialize: packToolPackageTarball,
+    packageDirs,
+    materialize: pack,
   });
 
-  const summaries: PublishSummary[] = [];
+  const toUpload: PackedTarball[] = [];
   for (const item of packed) {
     if (item.status !== "ok") continue;
     const tarball = item.value;
@@ -291,6 +403,26 @@ export async function publishCorbitsToolsRegistry(
       );
       continue;
     }
+    toUpload.push(tarball);
+  }
+
+  const existingFilenames = [...existingIntegrityByFilename.keys()];
+  if (toUpload.length === 0) {
+    if (!tarballsCoverRequiredSeedPackages(existingFilenames)) {
+      throw new EmptyRegistryPublishError({
+        uploaded: [],
+        missing: missingRequiredSeedPackages(existingFilenames),
+      });
+    }
+    return { success: true, summaries: [] };
+  }
+
+  const assetId =
+    existingId ??
+    (await ensureRegistryAsset(args.api, args.cookies, args.tenantId));
+
+  const summaries: PublishSummary[] = [];
+  for (const tarball of toUpload) {
     const summary = await putTarball(
       args.hubUrl,
       args.cookies,
@@ -304,5 +436,16 @@ export async function publishCorbitsToolsRegistry(
     );
     summaries.push(summary);
   }
-  return summaries;
+
+  const publishedFilenames = [
+    ...existingFilenames,
+    ...summaries.map((summary) => summary.filename),
+  ];
+  if (!tarballsCoverRequiredSeedPackages(publishedFilenames)) {
+    throw new EmptyRegistryPublishError({
+      uploaded: summaries.map((summary) => summary.filename),
+      missing: missingRequiredSeedPackages(publishedFilenames),
+    });
+  }
+  return { success: true, summaries };
 }

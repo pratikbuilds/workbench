@@ -5,9 +5,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { UnauthenticatedError } from "@corbits/api-query";
+import { InferenceSettingsApiError } from "@corbits/inference-settings";
 import {
   ChatApiError,
   createWorkbench,
+  describeChatError,
   runDisplayName,
   inviteAgent,
   JIMMY_QUICK_CREATE,
@@ -17,6 +19,7 @@ import {
   listInvitableDefinitions,
   listTenantInvitableDefinitions,
   listVisibleAgentDefinitions,
+  listWorkbenchAgents,
   openAgentDm,
   listMessages,
   listPinnedMessages,
@@ -409,6 +412,55 @@ describe("listInvitableDefinitions", () => {
   });
 });
 
+describe("listWorkbenchAgents", () => {
+  test("parses each agent with its person-facing display name (CL-6424)", async () => {
+    const calls = stubFetch(() =>
+      json({
+        items: [
+          {
+            address: "ins_echo@acme.example",
+            handle: "myra",
+            definitionId: "wfd_echo",
+            definitionAssetId: "ast_wfd_echo",
+            displayName: "Myra",
+          },
+        ],
+      }),
+    );
+    const items = await listWorkbenchAgents("tenant_1", "chan_1");
+    expect(calls[0]?.path).toBe(
+      "/api/tenants/tenant_1/chat/workbenches/chan_1/agents",
+    );
+    expect(items).toEqual([
+      {
+        address: "ins_echo@acme.example",
+        handle: "myra",
+        definitionId: "wfd_echo",
+        definitionAssetId: "ast_wfd_echo",
+        displayName: "Myra",
+      },
+    ]);
+  });
+
+  test("throws a ChatApiError when an agent carries no display name", async () => {
+    stubFetch(() =>
+      json({
+        items: [
+          {
+            address: "ins_echo@acme.example",
+            handle: "myra",
+            definitionId: "wfd_echo",
+            definitionAssetId: "ast_wfd_echo",
+          },
+        ],
+      }),
+    );
+    await expect(
+      listWorkbenchAgents("tenant_1", "chan_1"),
+    ).rejects.toBeInstanceOf(ChatApiError);
+  });
+});
+
 describe("listVisibleAgentDefinitions", () => {
   test("fetches the tenant's visible agent definitions, own and inherited", async () => {
     const calls = stubFetch(() =>
@@ -743,5 +795,54 @@ describe("runDisplayName", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
       }),
     ).toBe("Untitled agent");
+  });
+});
+
+describe("describeChatError", () => {
+  const fallback = "Couldn't load the models.";
+
+  test("surfaces an InferenceSettingsApiError envelope userMessage on 500", () => {
+    expect(
+      describeChatError(
+        new InferenceSettingsApiError("catalog boom", 500),
+        fallback,
+      ),
+    ).toBe("catalog boom");
+  });
+
+  test("maps an InferenceSettingsApiError 401 the same way as ChatApiError", () => {
+    expect(
+      describeChatError(
+        new InferenceSettingsApiError("signed out boom", 401),
+        fallback,
+      ),
+    ).toBe("You're signed out. Sign in again to continue.");
+    expect(describeChatError(new ChatApiError("boom", 401), fallback)).toBe(
+      "You're signed out. Sign in again to continue.",
+    );
+  });
+
+  test("maps a network InferenceSettingsApiError the same way as ChatApiError", () => {
+    expect(
+      describeChatError(
+        new InferenceSettingsApiError("Failed to fetch"),
+        fallback,
+      ),
+    ).toBe("Couldn't reach the server. Check your connection and try again.");
+    expect(
+      describeChatError(new ChatApiError("Failed to fetch"), fallback),
+    ).toBe("Couldn't reach the server. Check your connection and try again.");
+  });
+
+  test("never leaks a ChatApiError path on 500", () => {
+    expect(
+      describeChatError(
+        new ChatApiError(
+          "The server answered 500 for /api/tenants/tnt_1/models.",
+          500,
+        ),
+        fallback,
+      ),
+    ).toBe("Something went wrong on our end. Try again in a moment.");
   });
 });

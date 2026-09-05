@@ -22,7 +22,7 @@ export {
 export {
   AVAILABLE_SKILLS_CLOSE_TAG,
   AVAILABLE_SKILLS_OPEN_TAG,
-  LOAD_SKILL_TOOL,
+  SKILLS_LOAD_TOOL,
   buildAvailableSkillsStanza,
   stripAvailableSkillsStanza,
   withAvailableSkills,

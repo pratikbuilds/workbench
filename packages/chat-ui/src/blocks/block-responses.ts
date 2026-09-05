@@ -25,6 +25,13 @@ export type QuestionResponsePayload = {
   readonly kind: "question";
   readonly answer: string;
   readonly optionIndex?: number;
+  /**
+   * ISO timestamp once the asking agent was notified, or `null` when
+   * the answer is on file but notify never landed. Omitted only in
+   * tests that are not exercising the retry path — treat missing as
+   * already notified.
+   */
+  readonly notifiedAt?: string | null;
 };
 
 export type BlockResponsePayload =

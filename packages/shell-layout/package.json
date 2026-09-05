@@ -19,7 +19,7 @@
     "@happy-dom/global-registrator": "^20.11.2",
     "@types/bun": "catalog:",
     "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
+    "@types/react-dom": "catalog:",
     "react-dom": "^19.2.0",
     "typescript": "catalog:"
   }

@@ -333,6 +333,8 @@ describeIfDb("listTopLevelRunFires", () => {
         definitionName: "workbench-digest",
         routineId: "rtn_pulse_check",
         routineName: "Pulse check",
+        hasInFlightTurn: false,
+        turns: [],
       });
 
       const direct = rows.find((row) => row.id === "run_direct_deployment1");
@@ -340,6 +342,8 @@ describeIfDb("listTopLevelRunFires", () => {
         definitionName: "researcher",
         routineId: null,
         routineName: null,
+        hasInFlightTurn: false,
+        turns: [],
       });
     } finally {
       await close();

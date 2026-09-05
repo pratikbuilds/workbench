@@ -75,7 +75,7 @@ describe("pending send lifecycle", () => {
       },
     ]);
 
-    expect(el.querySelector(".chat-sender-avatar-button")).not.toBeNull();
+    expect(el.querySelector(".sender-avatar-button")).not.toBeNull();
     expect(el.querySelector(".chat-bubble-time")?.textContent).not.toBe("");
     expect(el.querySelector(".chat-message-actions")).toBeNull();
   });

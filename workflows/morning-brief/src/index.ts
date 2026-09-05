@@ -152,9 +152,9 @@ export const MORNING_BRIEF_SYSTEM_PROMPT = [
 
 /**
  * Everything the definition needs that is per-deployment data. The
- * trigger address names a specific deployment's inbox; a routine's
- * scheduled fire (see `@corbits/routines`) launches this definition
- * directly and is independent of this field, matching how every other
+ * trigger address names a specific deployment's inbox; a native
+ * ScheduleTrigger on the definition launches this workflow on a clock
+ * and is independent of this field, matching how every other
  * workflow package in this catalog is authored.
  */
 export interface MorningBriefWorkflowInput {

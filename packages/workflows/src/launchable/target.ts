@@ -1,24 +1,20 @@
-// The one place a routine's target (a workflow asset id) becomes the
+// The one place a launch target (a workflow asset id) becomes the
 // definition that actually runs. Interchange keys `workflow_definition`
 // on `(asset_id, wire_hash)` and has no "newest approved deployment of
 // this asset" indirection of its own (docs/workflow-model.md), so this
 // module supplies exactly that query — and nothing else: no search by
-// name, no fallback to an unfrozen row, no pinning. Every caller (create,
-// retarget, launch, and the routine-target list) resolves through here so
-// a routine can never run, or offer, a definition this rule would not
+// name, no fallback to an unfrozen row, no pinning. Every caller
+// (create, retarget, launch, and the target list) resolves through here
+// so a fire can never run, or offer, a definition this rule would not
 // have picked.
 //
-// Moved from `@corbits/routines` into `@corbits/workflows` (CL-7373 fold
-// review): "what is launchable" is definition-domain logic, not a routine
-// concern — `@corbits/routines` now imports it from here rather than
-// owning a second copy. The pure follow-latest rule lives in
+// "What is launchable" is definition-domain logic in `@corbits/workflows`.
+// The pure follow-latest rule lives in
 // `./target-rule.ts` (no `drizzle-orm`/`@intx/db`, so it is safe on
 // `@corbits/workflows/client`); this file is the DB-touching half, and
 // both `resolveLaunchableDefinition` and `listLaunchableDefinitions`
 // below share the one row query and the one `pickLaunchableDefinition`
-// reduction — a second review pass (Greybeard pass 2) folded in
-// `@corbits/routines`' own duplicate `selectDistinctOn` query, which had
-// drifted to a second, un-shared tiebreak.
+// reduction.
 import { and, desc, eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { workflowDefinition, workflowDefinitionVersion } from "@intx/db/schema";
@@ -118,10 +114,9 @@ export async function resolveLaunchableDefinition(input: {
 
 /**
  * The newest launchable definition per source asset in a tenant, per
- * `pickLaunchableDefinition` — the query `@corbits/routines`' routine-
- * target listing (the web picker, Myra's tools) reduces further by
- * catalog/authorization; not authorized itself, so callers gate what
- * leaves.
+ * `pickLaunchableDefinition` — callers (the web picker, schedule list)
+ * reduce further by catalog/authorization; not authorized itself, so
+ * callers gate what leaves.
  */
 export async function listLaunchableDefinitions(
   db: LaunchableDb,

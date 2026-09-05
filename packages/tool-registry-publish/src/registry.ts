@@ -14,6 +14,40 @@
 export const CORBITS_TOOLS_REGISTRY = "corbits-tools";
 
 /**
+ * Package names a seeded `corbits-tools` registry must carry for the
+ * default workflow set to launch. Default workflows pin at least these
+ * (Myra's assistant pins `@corbits/memory-tools`); an empty or dangling
+ * registry — a package-registry row whose git repo has no tarball
+ * commits — is not seeded.
+ */
+export const REQUIRED_SEED_TOOL_PACKAGES = ["@corbits/memory-tools"] as const;
+
+/** True when `filename` is an npm-style tarball for `packageName` (any version). */
+export function tarballCoversPackage(
+  filename: string,
+  packageName: string,
+): boolean {
+  const prefix = `${packageName.replace(/^@/, "").replace("/", "-")}-`;
+  return filename.startsWith(prefix) && filename.endsWith(".tgz");
+}
+
+/**
+ * Whether a tarball listing is enough for first-run launch: non-empty
+ * and covering every `REQUIRED_SEED_TOOL_PACKAGES` entry. An empty list
+ * is the dangling-asset case (`GET tarballs` → `[]` after git init with
+ * no commit).
+ */
+export function tarballsCoverRequiredSeedPackages(
+  filenames: Iterable<string>,
+): boolean {
+  const list = [...filenames];
+  if (list.length === 0) return false;
+  return REQUIRED_SEED_TOOL_PACKAGES.every((name) =>
+    list.some((filename) => tarballCoversPackage(filename, name)),
+  );
+}
+
+/**
  * Absolute directories of the `@corbits/*-tools` packages published
  * into the `corbits-tools` registry. Every workflow's
  * `toolPackagePins` under the `@corbits` scope must name a package
@@ -25,7 +59,6 @@ export const CORBITS_TOOLS_REGISTRY = "corbits-tools";
 export const CORBITS_TOOL_PACKAGE_DIRS: readonly string[] = [
   new URL("../../memory-tools", import.meta.url).pathname,
   new URL("../../capability-tools", import.meta.url).pathname,
-  new URL("../../routines-tools", import.meta.url).pathname,
   new URL("../../connections-tools", import.meta.url).pathname,
   new URL("../../catalog-tools", import.meta.url).pathname,
   new URL("../../agent-directory-tools", import.meta.url).pathname,

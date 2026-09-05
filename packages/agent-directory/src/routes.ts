@@ -37,13 +37,13 @@ import {
   readAgentCapabilities,
   readAgentSystemPrompt,
   reindexPinnedSkills,
-  withAgentModel,
   withAgentSystemPrompt,
-  withAgentToolPackagePin,
   withoutAgentModel,
   type CreateAgentDefinitionCoreDeps,
   type CreateAgentDefinitionCoreInput,
 } from "./agent-workflow";
+import { commitLatestAgentAssetSnapshot } from "./asset-write";
+import { commitAgentCapabilityAdd } from "./capability-add";
 import {
   agentDefinitionSourceTree,
   AGENT_DEFINITION_ENTRY_PATH,
@@ -542,64 +542,19 @@ export function createAgentDefinitionRoutes({
       // fetched, never a stale or wider one.
       assertCapabilityInInventory(body, inventory);
 
-      const workflowJson = await readAgentDefinitionWorkflowJson(
-        assetService,
-        row.assetId,
-      );
-
-      let nextWorkflowJson: string;
-      let message: string;
-      let skills = await skillsStore.getSkills(row.assetId);
-      let nextSkills: readonly string[] | null = null;
-
-      switch (body.kind) {
-        case "toolPackage": {
-          nextWorkflowJson = withAgentToolPackagePin(workflowJson, {
-            name: body.name,
-            version: "*",
-          });
-          message = `Add ${body.name} to ${row.name}`;
-          break;
-        }
-        case "skill": {
-          nextSkills = skills.includes(body.name)
-            ? skills
-            : [...skills, body.name];
-          nextWorkflowJson = reindexPinnedSkills(
-            workflowJson,
-            await skillIndex.resolve(tenant.id, principal.id, nextSkills),
-          );
-          skills = nextSkills;
-          message = `Add ${body.name} skill to ${row.name}`;
-          break;
-        }
-        case "model": {
-          nextWorkflowJson = withAgentModel(workflowJson, body.canonicalName);
-          message = `Set ${row.name}'s model to ${body.canonicalName}`;
-          break;
-        }
-      }
-
-      await writeAndDeployAgentDefinition({
+      const added = await commitAgentCapabilityAdd({
+        db,
         assetService,
         deployer,
+        skillsStore,
+        skillIndex,
         tenantId: tenant.id,
         principalId: principal.id,
         assetId: row.assetId,
         handle: row.name,
-        workflowJson: nextWorkflowJson,
-        message,
+        body,
       });
-      if (nextSkills !== null) {
-        await skillsStore.setSkills(row.assetId, nextSkills);
-      }
-
-      const capabilities = readAgentCapabilities(nextWorkflowJson);
-      return c.json({
-        toolPackagePins: capabilities.toolPackagePins,
-        skills,
-        model: capabilities.model,
-      });
+      return c.json(added);
     },
   );
 
@@ -633,28 +588,32 @@ export function createAgentDefinitionRoutes({
         return c.json(definitionNotFound(definitionId), 404);
       }
 
-      const workflowJson = await readAgentDefinitionWorkflowJson(
+      const next = await commitLatestAgentAssetSnapshot({
         assetService,
-        row.assetId,
-      );
-
-      // Git first: the row updates below are what can still be retried
-      // safely if they fail after this succeeds (see the catch below) —
-      // the reverse order would leave a renamed row pointing at
-      // instructions that were never actually written.
-      const nextWorkflowJson = withAgentSystemPrompt(
-        workflowJson,
-        body.systemPrompt,
-      );
-      await writeAndDeployAgentDefinition({
-        assetService,
-        deployer,
-        tenantId: tenant.id,
-        principalId: principal.id,
         assetId: row.assetId,
-        handle: row.name,
-        workflowJson: nextWorkflowJson,
-        message: `Update agent instructions for ${row.name}`,
+        operation: "update instructions",
+        prepare: (snapshot) =>
+          Promise.resolve({
+            workflowJson: withAgentSystemPrompt(snapshot, body.systemPrompt),
+            message: `Update agent instructions for ${row.name}`,
+            result: { name: body.name, systemPrompt: body.systemPrompt },
+          }),
+        write: async ({ workflowJson, message }) => {
+          // Git first: the row updates below are what can still be retried
+          // safely if they fail after this succeeds (see the catch below) —
+          // the reverse order would leave a renamed row pointing at
+          // instructions that were never actually written.
+          await writeAndDeployAgentDefinition({
+            assetService,
+            deployer,
+            tenantId: tenant.id,
+            principalId: principal.id,
+            assetId: row.assetId,
+            handle: row.name,
+            workflowJson,
+            message,
+          });
+        },
       });
 
       const now = new Date();
@@ -692,7 +651,7 @@ export function createAgentDefinitionRoutes({
         );
       }
 
-      return c.json({ name: body.name, systemPrompt: body.systemPrompt });
+      return c.json(next);
     },
   );
 
@@ -719,31 +678,40 @@ export function createAgentDefinitionRoutes({
         return c.json(definitionNotFound(definitionId), 404);
       }
 
-      const workflowJson = await readAgentDefinitionWorkflowJson(
+      const cleared = await commitLatestAgentAssetSnapshot({
         assetService,
-        row.assetId,
-      );
-      const nextWorkflowJson = withoutAgentModel(workflowJson);
-      await assetService.populateAsset({
         assetId: row.assetId,
-        ref: DEFAULT_ASSET_REF,
-        principal: { kind: "hub" },
-        tree: {
-          files: agentDefinitionSourceTree({
-            handle: row.name,
-            workflowJson: nextWorkflowJson,
-          }),
-          message: `Clear ${row.name}'s model`,
+        operation: "clear model",
+        prepare: async (snapshot) => {
+          const workflowJson = withoutAgentModel(snapshot);
+          const capabilities = readAgentCapabilities(workflowJson);
+          const skills = await skillsStore.getSkills(row.assetId);
+          return {
+            workflowJson,
+            message: `Clear ${row.name}'s model`,
+            result: {
+              toolPackagePins: capabilities.toolPackagePins,
+              skills,
+              model: capabilities.model,
+            },
+          };
+        },
+        write: async ({ workflowJson, message }) => {
+          await assetService.populateAsset({
+            assetId: row.assetId,
+            ref: DEFAULT_ASSET_REF,
+            principal: { kind: "hub" },
+            tree: {
+              files: agentDefinitionSourceTree({
+                handle: row.name,
+                workflowJson,
+              }),
+              message,
+            },
+          });
         },
       });
-
-      const capabilities = readAgentCapabilities(nextWorkflowJson);
-      const skills = await skillsStore.getSkills(row.assetId);
-      return c.json({
-        toolPackagePins: capabilities.toolPackagePins,
-        skills,
-        model: capabilities.model,
-      });
+      return c.json(cleared);
     },
   );
 
@@ -853,29 +821,38 @@ export function createAgentDefinitionRoutes({
         );
       }
 
+      const assetId = row.assetId;
       const principal = c.get("principal");
-      const workflowJson = await readAgentDefinitionWorkflowJson(
+      const updated = await commitLatestAgentAssetSnapshot({
         assetService,
-        row.assetId,
-      );
-
-      const nextWorkflowJson = reindexPinnedSkills(
-        workflowJson,
-        await skillIndex.resolve(tenant.id, principal.id, body.skills),
-      );
-      await writeAndDeployAgentDefinition({
-        assetService,
-        deployer,
-        tenantId: tenant.id,
-        principalId: principal.id,
-        assetId: row.assetId,
-        handle: row.name,
-        workflowJson: nextWorkflowJson,
-        message: `Update agent skills for ${row.name}`,
+        assetId,
+        operation: "update skills",
+        prepare: async (snapshot) => {
+          const workflowJson = reindexPinnedSkills(
+            snapshot,
+            await skillIndex.resolve(tenant.id, principal.id, body.skills),
+          );
+          return {
+            workflowJson,
+            message: `Update agent skills for ${row.name}`,
+            afterWrite: () => skillsStore.setSkills(assetId, body.skills),
+            result: { skills: body.skills },
+          };
+        },
+        write: async ({ workflowJson, message }) => {
+          await writeAndDeployAgentDefinition({
+            assetService,
+            deployer,
+            tenantId: tenant.id,
+            principalId: principal.id,
+            assetId,
+            handle: row.name,
+            workflowJson,
+            message,
+          });
+        },
       });
-      await skillsStore.setSkills(row.assetId, body.skills);
-
-      return c.json({ skills: body.skills });
+      return c.json(updated);
     },
   );
 

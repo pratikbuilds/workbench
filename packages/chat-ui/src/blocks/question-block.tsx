@@ -6,9 +6,12 @@
 // route additionally relays it into the workbench as this principal's own
 // message (see `packages/chat/src/routes.ts`) -- the card itself never
 // asserts a resolved answer; it always re-reads `own` from the server,
-// same anti-spoof rule every other block card follows.
+// same anti-spoof rule every other block card follows. A question `own`
+// carries `notifiedAt`: null means the answer is on file but notify never
+// landed, so the card keeps a retry (including after remount) rather than
+// collapsing as if the agent had already been reached.
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { QuestionBlockData } from "@corbits/chat/blocks";
 import { Check } from "@corbits/icons";
 
@@ -19,14 +22,60 @@ import type {
   BlockResponseQuery,
 } from "./block-responses";
 
-function ownAnswer(
-  query: BlockResponseQuery,
-): { readonly answer: string; readonly optionIndex?: number } | null {
+function ownAnswer(query: BlockResponseQuery): {
+  readonly answer: string;
+  readonly optionIndex?: number;
+  readonly notifiedAt?: string | null;
+} | null {
   if (query.kind !== "ready" || query.own === null) return null;
   if (query.own.kind !== "question") return null;
-  return query.own.optionIndex !== undefined
-    ? { answer: query.own.answer, optionIndex: query.own.optionIndex }
-    : { answer: query.own.answer };
+  return {
+    answer: query.own.answer,
+    ...(query.own.optionIndex !== undefined
+      ? { optionIndex: query.own.optionIndex }
+      : {}),
+    ...(query.own.notifiedAt !== undefined
+      ? { notifiedAt: query.own.notifiedAt }
+      : {}),
+  };
+}
+
+function notifyNeverLanded(answered: ReturnType<typeof ownAnswer>): boolean {
+  return answered !== null && answered.notifiedAt === null;
+}
+
+function answeredValue(
+  answered: NonNullable<ReturnType<typeof ownAnswer>>,
+): string {
+  return answered.optionIndex !== undefined
+    ? `${CHAT_STRINGS.optionLetter(answered.optionIndex)}. ${answered.answer}`
+    : answered.answer;
+}
+
+function AnsweredSummary({
+  answered,
+  notifyFailed,
+}: {
+  readonly answered: NonNullable<ReturnType<typeof ownAnswer>>;
+  readonly notifyFailed: boolean;
+}) {
+  return (
+    <div className="chat-block-question-answered" data-answered="true">
+      {!notifyFailed && (
+        <span className="chat-block-question-check" aria-hidden="true">
+          <Check />
+        </span>
+      )}
+      <div>
+        <p className="chat-block-question-answered-label">
+          {CHAT_STRINGS.blockQuestionAnsweredLabel}
+        </p>
+        <p className="chat-block-question-answered-value">
+          {answeredValue(answered)}
+        </p>
+      </div>
+    </div>
+  );
 }
 
 function StaticOptions({ data }: { readonly data: QuestionBlockData }) {
@@ -60,6 +109,7 @@ export function QuestionBlockView({
 }) {
   const [query, setQuery] = useState<BlockResponseQuery>({ kind: "loading" });
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");
 
@@ -67,6 +117,7 @@ export function QuestionBlockView({
     if (actions === undefined || messageId === undefined) return;
     let cancelled = false;
     setQuery({ kind: "loading" });
+    setError(null);
     actions.getResponses(messageId, data.questionId).then((result) => {
       if (!cancelled) setQuery(result);
     });
@@ -90,17 +141,29 @@ export function QuestionBlockView({
 
   function submitAnswer(answer: string, optionIndex?: number) {
     if (actions === undefined || messageId === undefined) return;
+    if (submitting || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setError(null);
     actions
       .submitQuestion(messageId, data.questionId, answer, optionIndex)
-      .then((result) => {
-        if (result.kind !== "submitted") {
-          setError(CHAT_STRINGS.blockQuestionAnswerError);
-        }
-        return actions.getResponses(messageId, data.questionId).then(setQuery);
+      .then(async (result) => {
+        const next = await actions.getResponses(messageId, data.questionId);
+        setQuery(next);
+        if (result.kind === "submitted") return;
+        // Persist failure leaves no `own`; notify_failed leaves `own` with
+        // `notifiedAt: null`. The card derives retry from that GET, not from
+        // this submit result — the result only picks the error copy.
+        setError(
+          ownAnswer(next) !== null
+            ? CHAT_STRINGS.blockQuestionNotifyFailed
+            : CHAT_STRINGS.blockQuestionAnswerError,
+        );
       })
-      .finally(() => setSubmitting(false));
+      .finally(() => {
+        submittingRef.current = false;
+        setSubmitting(false);
+      });
   }
 
   function onFreeTextSubmit(event: FormEvent<HTMLFormElement>) {
@@ -112,25 +175,36 @@ export function QuestionBlockView({
 
   const loading = query.kind === "loading";
   const answered = ownAnswer(query);
+  const notifyFailed = notifyNeverLanded(answered);
 
   if (answered !== null) {
     return (
       <BlockCard title={data.question}>
-        <div className="chat-block-question-answered" data-answered="true">
-          <span className="chat-block-question-check" aria-hidden="true">
-            <Check />
-          </span>
-          <div>
-            <p className="chat-block-question-answered-label">
-              {CHAT_STRINGS.blockQuestionAnsweredLabel}
+        <AnsweredSummary answered={answered} notifyFailed={notifyFailed} />
+        {notifyFailed && (
+          <>
+            <p className="chat-block-text" role="alert">
+              {error ?? CHAT_STRINGS.blockQuestionNotifyFailed}
             </p>
-            <p className="chat-block-question-answered-value">
-              {answered.optionIndex !== undefined
-                ? `${CHAT_STRINGS.optionLetter(answered.optionIndex)}. ${answered.answer}`
-                : answered.answer}
-            </p>
-          </div>
-        </div>
+            <div className="chat-block-actions">
+              <button
+                type="button"
+                className="chat-block-question-freetext-submit"
+                data-question-retry=""
+                disabled={submitting}
+                onClick={() =>
+                  answered.optionIndex !== undefined
+                    ? submitAnswer(answered.answer, answered.optionIndex)
+                    : submitAnswer(answered.answer)
+                }
+              >
+                {submitting
+                  ? CHAT_STRINGS.blockQuestionSubmitting
+                  : CHAT_STRINGS.blockQuestionRetry}
+              </button>
+            </div>
+          </>
+        )}
       </BlockCard>
     );
   }

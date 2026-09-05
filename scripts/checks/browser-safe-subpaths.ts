@@ -1,5 +1,5 @@
 // check:browser-safe-subpaths — a package that declares a "browser-safe"
-// subpath (`@corbits/routines/client`, `@corbits/inbox/client`, …) is
+// subpath (`@corbits/inbox/client`, `@corbits/workflows/client`, …) is
 // making a promise: nothing reachable from that one entry point pulls in
 // a server-only dependency. Comments have said as much for a while; this
 // check is what actually makes it true, by walking the real transitive
@@ -50,7 +50,6 @@ export interface BrowserSafeEntry {
  * only reaches this entry point — this is what backs that claim.
  */
 export const ENTRIES: readonly BrowserSafeEntry[] = [
-  { package: "@corbits/routines", subpath: "./client" },
   { package: "@corbits/inbox", subpath: "./client" },
   { package: "@corbits/insights", subpath: "./client" },
   { package: "@corbits/agent-directory", subpath: "./client" },
@@ -182,7 +181,7 @@ function splitPackageSpecifier(specifier: string): {
 
 /**
  * `./client` is this repo's naming convention for a browser-safe subpath
- * (routines, inbox, insights, agent-directory, presence, bench,
+ * (inbox, insights, agent-directory, presence, bench,
  * preferences all use it) — a package that declares one is making the same
  * "nothing server-only reaches here" promise ENTRIES exists to check, so a
  * declared `./client` with no ENTRIES ruling is itself a violation, not a

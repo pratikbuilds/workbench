@@ -314,20 +314,15 @@ export const APP_ROUTES: readonly AppRoute[] = [
     path: ROUTINE_DETAIL_PATH,
     label: "Routine",
     icon: <FlowArrow />,
-    render: (path: string, navigate: (to: string) => void) => (
-      <RoutineDetailRoute
-        segment={routineDetailSegment(path)}
-        navigate={navigate}
-      />
+    render: (path: string) => (
+      <RoutineDetailRoute segment={routineDetailSegment(path)} />
     ),
   },
   {
     path: "/routines",
     label: "Routines",
     icon: <FlowArrow />,
-    render: (_path: string, navigate: (to: string) => void) => (
-      <RoutinesRoute navigate={navigate} />
-    ),
+    render: () => <RoutinesRoute />,
   },
   {
     // A workflow definition's own page (CL-7371) — no roster of its own

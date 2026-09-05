@@ -224,17 +224,28 @@ export function insightsScopePath(tenantId: string): string {
   return `/api/tenants/${tenantId}/insights/scope`;
 }
 
+export const ListingTurnSchema = type({
+  status: "string",
+  "endedAt?": "string | null",
+});
+
 /**
  * `WorkflowRunResponse` plus the two fields only the `feed=fires` mode of
  * `/top-level-runs` reports (CL-6249): the routine that fired this run,
  * when it has one. Both are `null` for a run with no routine/task
  * parent — a directly launched workflow — so a caller falls back to
  * `definitionName` honestly instead of inventing a routine.
+ * `turns` / `hasInFlightTurn` are this build's listing of in-flight
+ * inference turns for the run (not Interchange fields) so a live
+ * tool-loop can stay running past the abandoned-fire window. Omitting
+ * them is not "no in-flight turn".
  */
 export const InsightsRunSchema = WorkflowRunResponse.and(
   type({
     routineId: "string | null",
     routineName: "string | null",
+    "hasInFlightTurn?": "boolean",
+    "turns?": ListingTurnSchema.array(),
   }),
 );
 export type InsightsRun = typeof InsightsRunSchema.infer;

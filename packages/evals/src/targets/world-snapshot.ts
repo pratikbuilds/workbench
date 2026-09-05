@@ -1,8 +1,8 @@
 // Reads the tenant's actual state straight off the platform's own
 // tables and stores — the same "read the platform's own tables
 // directly" convention `./trace.ts` already established for tool
-// calls, extended here to agent definitions, routines, and
-// connections. A scorer that only ever saw the transcript could check
+// calls, extended here to agent definitions, connections, and
+// webhook triggers. A scorer that only ever saw the transcript could check
 // what the agent *said/called*; this is what lets it check what
 // actually exists afterward.
 //
@@ -15,13 +15,10 @@
 //     `readAgentCapabilities` on the definition its asset's source tree
 //     carries, read back through `readAgentDefinitionWorkflowJson` —
 //     the same pair `GET /:definitionId/capabilities` calls.
-//   - routines: `routines.routine`, queried the same
-//     `tenantId`/`deletedAt IS NULL` shape `RoutineStore.listRoutines`
-//     uses.
 //   - connections: `@corbits/connections`'
 //     `listMcpServerConnections` verbatim — it already filters to an
 //     active credential, so everything it returns is "live".
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { DB } from "@intx/db";
 import { resolveCredentialByName, schema } from "@intx/db";
 import type { AssetService } from "@intx/hub-sessions";
@@ -29,7 +26,6 @@ import {
   readAgentCapabilities,
   readAgentDefinitionWorkflowJson,
 } from "@corbits/agent-directory";
-import { routine as routineTable } from "@corbits/routines";
 import { webhookTrigger as webhookTriggerTable } from "@corbits/webhook-triggers";
 import {
   connectorDescriptors,
@@ -89,23 +85,6 @@ async function readAgentDefinitions(
   );
 }
 
-async function readRoutines(db: DB["db"], tenantId: string) {
-  const rows = await db
-    .select()
-    .from(routineTable)
-    .where(
-      and(eq(routineTable.tenantId, tenantId), isNull(routineTable.deletedAt)),
-    );
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    definitionAssetId: row.definitionAssetId,
-    trigger: row.trigger,
-    deliveryWorkbenchId: row.deliveryWorkbenchId,
-    enabled: row.enabled,
-  }));
-}
-
 async function readConnections(
   db: DB["db"],
   tenantId: string,
@@ -156,29 +135,25 @@ async function readWebhookTriggers(db: DB["db"], tenantId: string) {
 /**
  * Captures everything a world-snapshot scorer can check about the
  * tenant right now: its deployed agent definitions (with tools/skills/
- * model), its routines (with trigger/delivery), its live connections,
- * and whatever a recording MCP fake has received so far. Read-only —
- * never mutates anything.
+ * model), its live connections, and whatever a recording MCP fake has
+ * received so far. Read-only — never mutates anything.
  */
 export async function captureWorldSnapshot(
   infra: WorldSnapshotInfra,
   tenantId: string,
 ): Promise<WorldSnapshot> {
-  const [agentDefinitions, routines, connections, webhookTriggers] =
-    await Promise.all([
-      readAgentDefinitions(infra.db, infra.assetService, tenantId),
-      readRoutines(infra.db, tenantId),
-      readConnections(
-        infra.db,
-        tenantId,
-        infra.resolveCredentialByNameFn ?? resolveCredentialByName,
-      ),
-      readWebhookTriggers(infra.db, tenantId),
-    ]);
+  const [agentDefinitions, connections, webhookTriggers] = await Promise.all([
+    readAgentDefinitions(infra.db, infra.assetService, tenantId),
+    readConnections(
+      infra.db,
+      tenantId,
+      infra.resolveCredentialByNameFn ?? resolveCredentialByName,
+    ),
+    readWebhookTriggers(infra.db, tenantId),
+  ]);
   return {
     capturedAt: new Date().toISOString(),
     agentDefinitions,
-    routines,
     connections,
     webhookTriggers,
     fakeReceipts: infra.fakeReceiptsReader?.() ?? [],

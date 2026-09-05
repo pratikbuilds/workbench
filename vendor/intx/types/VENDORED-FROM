@@ -1,4 +1,4 @@
 Source: https://github.com/faremeter/interchange (packages/types)
 Commit: a8bc06ae38661c5e0ed91ded8559bf09f502213d (origin/main, 2026-08-27)
 License: LGPL-2.1-only (see vendor/intx/LICENSE)
-Local modifications: exports map repointed from the upstream intx-src condition to direct TypeScript source resolution (types/default -> ./src/...); dist references removed. CL-7190: "message_response" added to signals.ts's signalKinds, alongside signalKindToGateType.
+Local modifications: exports map repointed from the upstream intx-src condition to direct TypeScript source resolution (types/default -> ./src/...); dist references removed. CL-7443 retires CL-7190's local delta ("message_response" added to signals.ts's signalKinds, alongside signalKindToGateType): `ask_user` posts its question and ends the turn instead of parking a signal, so signals.ts is back to upstream's approval-only shape. CL-6396: AgentEventFrame gains an optional childRunId so a sidecar can name the occurrence (turn__<n>) the event belongs to.

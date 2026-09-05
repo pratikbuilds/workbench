@@ -110,6 +110,14 @@ Deployment is explicit via **Pulumi**, targeting **Railway**. CI runs
 tests only — nothing auto-deploys on `main`; a deploy is a deliberate,
 separate action.
 
+**Where sidecars run** is one variable, `SIDECAR_PROVISIONERS`. Unset —
+the default — the hub registers the `process` backend alone and runs each
+exclusive sidecar as a child process on its own host, so a single-server
+install works with no configuration. `docker` and `e2b` are the other
+shipped backends. See
+[docs/sidecar-provisioners.md](docs/sidecar-provisioners.md) for the
+comparison, the required settings per backend, and how to add another.
+
 ## Workbench Definition (shipped)
 
 `WorkbenchDefinition` (`WorkbenchDefinitionSchema` in

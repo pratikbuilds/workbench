@@ -18,7 +18,8 @@
     "./consumer-inference-text": "./src/consumer-inference-text.ts",
     "./workbench-host-naming": "./src/workbench-host-naming.ts",
     "./display-name": "./src/display-name.ts",
-    "./id-leak-guard": "./src/id-leak-guard.ts"
+    "./id-leak-guard": "./src/id-leak-guard.ts",
+    "./mailbox-fanout": "./src/mailbox-fanout.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -34,6 +35,7 @@
     "@corbits/error-sink": "workspace:*",
     "@corbits/hub-api-client": "workspace:*",
     "@corbits/folded-runs": "workspace:*",
+    "@corbits/mailbox": "github:corbitsdev/corbits-mailbox#118a2cd3b0b2d83abcd57b4bed1698e95ee41b6d",
     "@corbits/memory": "github:corbitsdev/corbits-memory#9e6f213fa2c002b531d3f6af1aa0abd737b8afe3",
     "@corbits/turn-artifacts": "workspace:*",
     "@corbits/workflows": "workspace:*",
@@ -53,7 +55,7 @@
     "@corbits/connections": "workspace:*",
     "arktype": "catalog:",
     "drizzle-orm": "catalog:",
-    "hono": "^4.11.9",
+    "hono": "catalog:",
     "postgres": "catalog:"
   },
   "devDependencies": {

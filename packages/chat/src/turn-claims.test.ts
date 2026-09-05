@@ -64,6 +64,30 @@ describe("createInMemoryTurnClaimStore", () => {
     ).resolves.toBe(true);
   });
 
+  test("a mismatched release evicts an already-expired entry, so the true original token then finds nothing left to release", async () => {
+    let now = 0;
+    const store = createInMemoryTurnClaimStore({
+      ttlMs: 1_000,
+      now: () => now,
+    });
+    const token = await store.tryClaim({ workbenchId: "wb_1" });
+    now += 1_000; // expired, but nobody has claimed it since
+
+    // A release with the wrong token still can't claim credit for
+    // freeing this workbench, but it notices the stale entry it found
+    // along the way and cleans it up rather than leaving it in place.
+    await expect(
+      store.release({ workbenchId: "wb_1" }, "not_the_real_token"),
+    ).resolves.toBe(false);
+
+    // Proof the entry is actually gone, not merely ignored: the true
+    // original token — still technically correct — now finds nothing
+    // left to release.
+    await expect(
+      store.release({ workbenchId: "wb_1" }, token as string),
+    ).resolves.toBe(false);
+  });
+
   test("a claim older than the TTL is reclaimable even without release — the crash/hang backstop", async () => {
     let now = 0;
     const store = createInMemoryTurnClaimStore({
@@ -105,6 +129,22 @@ describe("createInMemoryTurnClaimStore", () => {
       now += 1_000;
       await expect(
         store.holds({ workbenchId: "wb_1" }, token as string),
+      ).resolves.toBe(false);
+    });
+
+    test("observing an expired claim deletes it, so the original token then finds nothing to release", async () => {
+      let now = 0;
+      const store = createInMemoryTurnClaimStore({
+        ttlMs: 1_000,
+        now: () => now,
+      });
+      const token = await store.tryClaim({ workbenchId: "wb_1" });
+      now += 1_000;
+      await expect(
+        store.holds({ workbenchId: "wb_1" }, token as string),
+      ).resolves.toBe(false);
+      await expect(
+        store.release({ workbenchId: "wb_1" }, token as string),
       ).resolves.toBe(false);
     });
   });

@@ -3,8 +3,9 @@
 // field), Advanced stays collapsed, submitting drafts a system prompt
 // via Myra before deploying, a Suggestions card runs the exact same
 // drafting flow with its name+purpose prefilled, and a failed draft
-// fails closed — Advanced opens with a manual system prompt field
-// rather than falling back to a silent template. Settings' global
+// fails closed — the panel surfaces the failure, keeps Advanced
+// collapsed, and the disabled primary names the blocker rather than
+// silently opening Advanced or falling back to a silent template. Settings' global
 // "Agents" directory (this form's original entry point) was cut in
 // CL-6121 — agent configuration lives per-workbench now; the chat page's
 // "+ New chat" picker moved to instant creation (CL-6081) and no longer
@@ -27,6 +28,17 @@ function json(body: unknown, status = 200) {
   });
 }
 
+const CATALOG_MODEL = {
+  id: "mdl_1",
+  tenantId: "tenant_1",
+  canonicalName: "anthropic/claude-sonnet-4",
+  displayName: "Claude Sonnet 4",
+  description: null,
+  disabled: false,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
+
 const CREATED_DEFINITION = {
   id: "wfd_new",
   tenantId: "tenant_1",
@@ -42,6 +54,7 @@ const CREATED_DEFINITION = {
 function stubFetch(overrides: {
   draft?: (body: Record<string, unknown>) => Response;
   create?: (body: Record<string, unknown>) => Response;
+  models?: readonly unknown[];
 }): void {
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -50,7 +63,9 @@ function stubFetch(overrides: {
         ? (JSON.parse(String(init.body)) as Record<string, unknown>)
         : {};
     if (url.includes("/catalog/models")) {
-      return Promise.resolve(json({ data: [], nextCursor: null }));
+      return Promise.resolve(
+        json({ data: overrides.models ?? [], nextCursor: null }),
+      );
     }
     if (url.endsWith("/skills")) {
       return Promise.resolve(json({ skills: [] }));
@@ -166,6 +181,7 @@ describe("CreateAgentPanel happy path", () => {
     ].find((el) => (el.textContent ?? "").trim() === "New agent");
     expect(heading).toBeDefined();
     expect(document.body.textContent).not.toContain("New workbench");
+    fillField("create-agent-name", "Research Buddy");
     const cta = findButton("Get started");
     expect(cta).toBeDefined();
     expect(cta?.textContent).not.toMatch(/workbench/i);
@@ -173,9 +189,9 @@ describe("CreateAgentPanel happy path", () => {
 
   test("a name alone is enough — purpose is optional, never a gate", async () => {
     await mount();
-    const button = findButton("Get started");
-    expect(button?.hasAttribute("disabled")).toBe(true);
-    expect(document.body.textContent).toContain("Add a name to continue.");
+    const emptyCta = findButton("Add a name to continue.");
+    expect(emptyCta?.hasAttribute("disabled")).toBe(true);
+    expect(findButton("Get started")).toBeUndefined();
 
     fillField("create-agent-name", "Research Buddy");
     expect(findButton("Get started")?.hasAttribute("disabled")).toBe(false);
@@ -293,9 +309,10 @@ describe("CreateAgentPanel Suggestions", () => {
 });
 
 describe("CreateAgentPanel drafting failure — fails closed", () => {
-  test("a failed draft opens Advanced and blocks submission until a manual system prompt is written", async () => {
+  test("a failed draft keeps Advanced collapsed and names the blocker on the disabled primary", async () => {
     let createCalled = false;
     stubFetch({
+      models: [CATALOG_MODEL],
       draft: () =>
         json(
           {
@@ -314,6 +331,7 @@ describe("CreateAgentPanel drafting failure — fails closed", () => {
     });
 
     await mount();
+    await settle();
     fillField("create-agent-name", "Research Buddy");
 
     const button = findButton("Get started");
@@ -326,12 +344,20 @@ describe("CreateAgentPanel drafting failure — fails closed", () => {
     const details = document.querySelector(
       ".create-agent-advanced",
     ) as HTMLDetailsElement | null;
-    expect(details?.open).toBe(true);
+    expect(details?.open).toBe(false);
     expect(document.body.textContent).toContain(
       "Myra couldn't draft a starting prompt for that.",
     );
+    expect(document.body.textContent).toContain("Reference: ref_1");
+    expect(findButton("Get started")).toBeUndefined();
+    const blockedCta = findButton(
+      "Open Advanced and write a system prompt to continue.",
+    );
+    expect(blockedCta).toBeDefined();
+    expect(blockedCta?.hasAttribute("disabled")).toBe(true);
+    expect(document.body.textContent).not.toContain("Myra picks one");
     expect(document.body.textContent).toContain(
-      "Write a system prompt below to continue.",
+      "Left unset, the agent uses the workbench default.",
     );
 
     const manualField = document.getElementById(
@@ -350,6 +376,40 @@ describe("CreateAgentPanel drafting failure — fails closed", () => {
     await settle();
 
     expect(createCalled).toBe(true);
+  });
+
+  test("a 500 envelope shows the consumer sentence plus Reference, not a dead-end", async () => {
+    stubFetch({
+      draft: () =>
+        json(
+          {
+            error: {
+              code: "internal_error",
+              userMessage: "Something went wrong. Please try again.",
+              refId: "ref_sink_1",
+            },
+          },
+          500,
+        ),
+    });
+
+    await mount();
+    fillField("create-agent-name", "Research Buddy");
+    await act(async () => {
+      findButton("Get started")?.click();
+    });
+    await settle();
+
+    expect(document.body.textContent).toContain(
+      "Something went wrong. Please try again.",
+    );
+    expect(document.body.textContent).toContain("Reference: ref_sink_1");
+    expect(document.body.textContent).not.toContain("The server answered 500.");
+    expect(document.body.textContent).not.toContain("at draft");
+    const details = document.querySelector(
+      ".create-agent-advanced",
+    ) as HTMLDetailsElement | null;
+    expect(details?.open).toBe(false);
   });
 });
 

@@ -24,10 +24,17 @@ export type SendFoldedMailParams = {
   content: string;
   attachments?: MessageAttachment[];
   replyTo?: string;
+  /**
+   * RFC 5322 threading (CL-7450): the caller's own `Message-ID` for this
+   * send, and the ancestry a reply correlates back through. A caller that
+   * owns an identity for what it is sending (a chat timeline row) supplies
+   * these; absent, `messageId` falls back to `<{mailId}@{domain}>` and
+   * `inReplyTo` falls back to the legacy `replyTo` mapping below.
+   */
+  messageId?: string;
+  inReplyTo?: string;
+  references?: readonly string[];
   cryptoProvider: CryptoProvider;
-  /** The MIME `Interchange-Correlation-ID` header — set when this message
-   * answers a specific parked `message_response` gate, absent otherwise. */
-  correlationId?: string;
 };
 
 /**
@@ -47,25 +54,27 @@ async function deliverFoldedMailMIME(
   const userMessageParams = {
     agentAddress: params.agentAddress,
     from: params.from,
-    messageId: `<${mailId}@${params.domain}>`,
+    messageId: params.messageId ?? `<${mailId}@${params.domain}>`,
     date: now,
     content: params.content,
     sessionId: params.sessionId,
     tenantId: params.tenantId,
     cryptoProvider: params.cryptoProvider,
-    ...(params.correlationId !== undefined
-      ? { correlationId: params.correlationId }
-      : {}),
   };
   const withAttachments =
     params.attachments !== undefined
       ? { ...userMessageParams, attachments: params.attachments }
       : userMessageParams;
+  const inReplyTo = params.inReplyTo ?? params.replyTo;
   const withReplyTo =
-    params.replyTo !== undefined
-      ? { ...withAttachments, inReplyTo: params.replyTo }
+    inReplyTo !== undefined
+      ? { ...withAttachments, inReplyTo }
       : withAttachments;
-  return deps.sessionService.sendUserMessage(withReplyTo);
+  const withReferences =
+    params.references !== undefined && params.references.length > 0
+      ? { ...withReplyTo, references: [...params.references] }
+      : withReplyTo;
+  return deps.sessionService.sendUserMessage(withReferences);
 }
 
 /**

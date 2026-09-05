@@ -57,6 +57,7 @@ function fakeActions(initial: ConnectServiceQuery): {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
+      notifySettingsChanged: async () => undefined,
       connect: (connectorId) => {
         connects.push(connectorId);
         return Promise.resolve({ ok: true });

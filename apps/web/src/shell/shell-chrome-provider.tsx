@@ -24,7 +24,6 @@ import {
   initialCanvasColumnState,
   openArtifactInCanvas,
   openProfileInCanvas,
-  openRoutineInCanvas,
   resolveCanvasFocus,
   resolveCanvasVisibility,
   toggleCanvasFocus,
@@ -42,6 +41,16 @@ import {
   type CanvasArtifactContent,
   type RoutinePanelSubject,
 } from "./canvas-availability";
+
+/** First pathname segment, ignoring query and hash. Nested detail under the
+ * same surface (`/routines` vs `/routines/:id`) shares a prefix; a rail leave
+ * (`/routines` → `/insights`) does not. */
+function inAppRoutePrefix(path: string): string {
+  const pathname = path.split("?")[0]?.split("#")[0] ?? "";
+  const trimmed = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+  const slash = trimmed.indexOf("/");
+  return slash === -1 ? trimmed : trimmed.slice(0, slash);
+}
 
 export function ShellChromeProvider({
   path,
@@ -68,6 +77,7 @@ export function ShellChromeProvider({
   // drop canvas state without treating the initial null→ready resolve as a
   // switch.
   const previousTenantIdRef = useRef<string | null>(selectedTenantId);
+  const previousRoutePrefixRef = useRef(inAppRoutePrefix(path));
 
   // A switch clears auxiliary canvas content and leaves any conversation
   // deep link so the stage does not keep a foreign conversation under the
@@ -89,6 +99,17 @@ export function ShellChromeProvider({
     previousTenantIdRef.current = selectedTenantId;
   }, [path, selectedTenantId, navigate]);
 
+  // Leaving a rail surface dismisses auxiliary canvas content so a compact
+  // viewport that hid the column cannot resurrect it when the shell expands
+  // again. Nested detail and query-only changes share a prefix and keep the
+  // pane.
+  useEffect(() => {
+    const nextPrefix = inAppRoutePrefix(path);
+    if (previousRoutePrefixRef.current === nextPrefix) return;
+    previousRoutePrefixRef.current = nextPrefix;
+    setCanvasState((state) => closeCanvasContent(state));
+  }, [path]);
+
   const openProfile = useCallback((subject: ProfileSubject) => {
     setCanvasState((state) => openProfileInCanvas(state, subject));
   }, []);
@@ -97,9 +118,10 @@ export function ShellChromeProvider({
     setCanvasState((state) => openArtifactInCanvas(state, artifact));
   }, []);
 
-  const openRoutine = useCallback((subject: RoutinePanelSubject) => {
-    setCanvasState((state) => openRoutineInCanvas(state, subject));
-  }, []);
+  const openRoutine = useCallback(
+    (_subject: RoutinePanelSubject) => undefined,
+    [],
+  );
 
   const closeCanvas = useCallback(() => {
     setCanvasState((state) => closeCanvasContent(state));

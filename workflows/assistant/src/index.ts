@@ -34,9 +34,8 @@ export const ASSISTANT_STEP_ID = "assistant";
  * is the original pin; `@corbits/capability-tools` lets Myra self-service
  * a missing tool, skill, or model; the manager-tools bundles give Myra
  * real workbench-management capability — a specialist agent she can
- * create (each gets their own chat), this workbench's routines, connection
- * visibility, and skill capture — each a thin wrapper over an existing
- * platform primitive (see each package's own file-header comment for
+ * create (each gets their own chat), connection visibility, and skill
+ * capture — each a thin wrapper over an existing platform primitive (see each package's own file-header comment for
  * which one). `@corbits/mcp-tools` and `@corbits/interaction-tools`
  * expose tenant-connected MCP servers and the ask-user card;
  * `@corbits/manus-tools` is pinned so Manus tools exist when the tenant
@@ -46,13 +45,12 @@ export const ASSISTANT_STEP_ID = "assistant";
 export const ASSISTANT_TOOL_PACKAGE_PINS: readonly ToolPackagePin[] = [
   { name: "@corbits/memory-tools", version: "0.0.4" },
   { name: "@corbits/capability-tools", version: "0.0.5" },
-  { name: "@corbits/routines-tools", version: "0.0.10" },
   { name: "@corbits/agent-directory-tools", version: "0.0.6" },
   { name: "@corbits/connections-tools", version: "0.0.8" },
   { name: "@corbits/catalog-tools", version: "0.0.2" },
   { name: "@corbits/skills-tools", version: "0.0.6" },
   { name: "@corbits/mcp-tools", version: "0.0.11" },
-  { name: "@corbits/interaction-tools", version: "0.0.4" },
+  { name: "@corbits/interaction-tools", version: "0.0.7" },
   { name: "@corbits/manus-tools", version: "0.0.11" },
   { name: "@corbits/workflow-authoring-tools", version: "0.0.4" },
 ];

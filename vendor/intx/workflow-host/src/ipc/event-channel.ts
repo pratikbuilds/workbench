@@ -46,6 +46,16 @@ import { signHmac, verifyHmac } from "./crypto";
 export const EventPayload = InferenceEvent;
 export type EventPayload = typeof EventPayload.infer;
 
+/**
+ * One verified event-channel frame. `childRunId` is the occurrence the
+ * body child stamped (`turn__<n>`); omitted for a top-level step event
+ * that is not an occurrence, and for a child that never stamped one.
+ */
+export type ReceivedEvent = {
+  readonly event: EventPayload;
+  readonly childRunId?: string;
+};
+
 export interface FrameWriter {
   write(bytes: Uint8Array): Promise<void> | void;
 }
@@ -61,7 +71,7 @@ export interface EventChannelSenderOpts {
 }
 
 export interface EventChannelSender {
-  send(payload: EventPayload): Promise<void>;
+  send(payload: EventPayload, childRunId?: string): Promise<void>;
   readonly seq: number;
 }
 
@@ -88,7 +98,7 @@ export function createEventChannelSender(
     get seq() {
       return seq;
     },
-    send(payload: EventPayload): Promise<void> {
+    send(payload: EventPayload, childRunId?: string): Promise<void> {
       const previous = tail;
       let release: () => void = () => undefined;
       tail = new Promise<void>((resolve) => {
@@ -102,6 +112,7 @@ export function createEventChannelSender(
             seq,
             channelId: opts.channelId,
             payload,
+            ...(childRunId !== undefined ? { childRunId } : {}),
           };
           const envelopeBytes = encodeEnvelope(envelope);
           const tag = await signHmac(envelopeBytes, opts.hmacKey);
@@ -144,18 +155,19 @@ export interface EventChannelReceiverOpts {
 
 /**
  * Construct the supervisor-side event-channel receiver. Yields one
- * verified, in-order `EventPayload` per call. Any frame that fails
+ * verified, in-order event per call, carrying the occurrence
+ * `childRunId` when the sender stamped it. Any frame that fails
  * HMAC verification, carries a non-current channelId, arrives out
  * of order, or arrives faster than the consumer drains -- triggers
  * `onCrash` and ends the iterator.
  */
 export async function* receiveEventChannel(
   opts: EventChannelReceiverOpts,
-): AsyncGenerator<EventPayload, void, void> {
+): AsyncGenerator<ReceivedEvent, void, void> {
   const limit = opts.bufferLimit ?? DEFAULT_EVENT_BUFFER_LIMIT;
   let highestSeq = 0;
 
-  const buffer: EventPayload[] = [];
+  const buffer: ReceivedEvent[] = [];
   let crashed = false;
   let producerDone = false;
   let waiter: (() => void) | null = null;
@@ -311,7 +323,12 @@ export async function* receiveEventChannel(
         wake();
         return true;
       }
-      buffer.push(payload);
+      buffer.push({
+        event: payload,
+        ...(maced.envelope.childRunId !== undefined
+          ? { childRunId: maced.envelope.childRunId }
+          : {}),
+      });
       wake();
       return false;
     }

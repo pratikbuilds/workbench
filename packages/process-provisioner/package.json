@@ -1,0 +1,25 @@
+{
+  "name": "@corbits/process-provisioner",
+  "private": true,
+  "description": "SidecarProvisioner plugin that runs each sidecar allocation as a child process on the hub host",
+  "version": "0.0.1",
+  "license": "LGPL-2.1-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@corbits/error-sink": "workspace:*",
+    "@corbits/sandbox-sidecar": "workspace:*",
+    "@intx/hub-sessions": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

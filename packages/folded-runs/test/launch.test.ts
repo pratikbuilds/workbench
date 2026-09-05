@@ -710,7 +710,7 @@ describe("launchFoldedRun", () => {
 
     const pinnedFoldedBody: FoldedBody = {
       ...FOLDED_BODY,
-      toolPackagePins: [{ name: "@corbits/routines-tools", version: "0.0.2" }],
+      toolPackagePins: [{ name: "@corbits/memory-tools", version: "0.0.4" }],
     };
 
     const result = await launchFoldedRun(
@@ -723,12 +723,12 @@ describe("launchFoldedRun", () => {
           toolGrantsForPinsCalls.push(pins);
           return [
             {
-              resource: "tool:@corbits/routines-tools/routines:routine_create",
+              resource: "tool:@corbits/memory-tools/memory:memory_add",
               action: "invoke",
               effect: "ask",
             },
             {
-              resource: "tool:@corbits/routines-tools/routines:routine_list",
+              resource: "tool:@corbits/memory-tools/memory:memory_list",
               action: "invoke",
               effect: "allow",
             },
@@ -753,7 +753,7 @@ describe("launchFoldedRun", () => {
     expect(deployed.config.grants).toEqual([
       {
         id: expect.any(String),
-        resource: "tool:@corbits/routines-tools/routines:routine_create",
+        resource: "tool:@corbits/memory-tools/memory:memory_add",
         action: "invoke",
         effect: "ask",
         origin: "system",
@@ -764,7 +764,7 @@ describe("launchFoldedRun", () => {
       },
       {
         id: expect.any(String),
-        resource: "tool:@corbits/routines-tools/routines:routine_list",
+        resource: "tool:@corbits/memory-tools/memory:memory_list",
         action: "invoke",
         effect: "allow",
         origin: "system",

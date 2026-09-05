@@ -142,7 +142,7 @@ ollama.onChat(() => ollama.reply.malformedToolName());
 | `.truncatedToolArgs(name, rawArgs)` | Arguments that are NOT valid JSON — a mid-stream cutoff, reaching the wire byte-for-byte.                  |
 | `.refusal(text?)`                   | The model declines to answer.                                                                              |
 | `.oversized(approxChars?)`          | A large enough text blob to exercise a truncation or blob-spill path.                                      |
-| `.hallucinatedToolName()`           | A plausible-but-nonexistent tool name (`skills_load` instead of the real `load_skill`).                    |
+| `.hallucinatedToolName()`           | A model calling `load_skill` instead of the canonical `skills_load`.                                       |
 
 `sequence([...])` scripts one reply per turn — turn 1 malformed, turn 2
 normal — so CL-6478's "does the room survive?" contract is directly

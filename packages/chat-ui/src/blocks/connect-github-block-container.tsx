@@ -11,9 +11,9 @@
 // refetch below, run once as the direct consequence of that one submit
 // (not a poll). A credential saved anywhere else (the Plugins page,
 // another tab) settles through `packages/chat/src/connect-pending.ts`'s
-// `settleConnectedService`, which clears this room's own
-// `template/pendingConnections` entry — so this card's next mount already
-// reads connected without needing a push while it sits open.
+// `settleConnectedService`, which publishes `chat.settings`; ChatWorkspace
+// parses that event and calls `notifySettingsChanged` so a card already
+// mounted flips without remounting (CL-6476).
 //
 // CL-6741: once a card has read connected, a later loading/error fold
 // (or a remount that starts on loading) must keep the last connected

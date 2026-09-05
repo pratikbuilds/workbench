@@ -127,6 +127,37 @@ export type MessageRunEnded = {
   readonly errorMessage: string | undefined;
 };
 
+/** The identity half of a `message.run.started`/`message.run.ended`
+ * bracket pair — the two ids every open and close both carry. Chat's
+ * orchestrator pairs them by `messageRunId` (reactor-minted per dequeue,
+ * so a crash-and-replay of the same `messageId` still produces
+ * unambiguous pairs) and matches `messageId` back to the dispatch mail
+ * that woke the turn. Undefined for any other event. */
+export type MessageRunBracket = {
+  readonly messageId: string;
+  readonly messageRunId: string;
+};
+
+export function messageRunBracket(
+  event: unknown,
+): MessageRunBracket | undefined {
+  if (typeof event !== "object" || event === null) return undefined;
+  const type = (event as { type?: unknown }).type;
+  if (type !== "message.run.started" && type !== "message.run.ended") {
+    return undefined;
+  }
+  const data = (
+    event as { data?: { messageId?: unknown; messageRunId?: unknown } }
+  ).data;
+  if (
+    typeof data?.messageId !== "string" ||
+    typeof data?.messageRunId !== "string"
+  ) {
+    return undefined;
+  }
+  return { messageId: data.messageId, messageRunId: data.messageRunId };
+}
+
 /** A `message.run.started` bracket open — the harness's own per-message
  * start signal, minted fresh (`messageRunId`) for every dequeued
  * message, including a redelivery of the same `messageId` — or

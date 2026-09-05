@@ -199,4 +199,40 @@ describeIfDb("createDrizzleAgentTurnStore", () => {
       await sql.end();
     }
   });
+
+  // CL-6396: the in-memory store already names a specific occurrence when
+  // `childRunId` is given. This is that same lookup against the production
+  // Drizzle store — `eq(agentTurns.childRunId)` must pick the named row,
+  // never the newest-occurrence fallback, while two rows are still running.
+  test("findRunningTurn names a specific occurrence when childRunId is given", async () => {
+    const sql = postgres(scratchUrl, { max: 5, onnotice: () => undefined });
+    try {
+      const store = createDrizzleAgentTurnStore(drizzle(sql));
+      const input = {
+        tenantId: TENANT,
+        workbenchId: "run_child_run_id",
+        agentAddress: AGENT,
+        requestMessageIds: ["msg_lookup"],
+      };
+      const first = await store.startTurn(input);
+      const second = await store.startTurn(input);
+      expect(first.childRunId).toBe("turn__0");
+      expect(second.childRunId).toBe("turn__1");
+      expect(first.status).toBe("running");
+      expect(second.status).toBe("running");
+
+      expect((await store.findRunningTurn(input))?.id).toBe(second.id);
+      expect(
+        (await store.findRunningTurn({ ...input, childRunId: "turn__0" }))?.id,
+      ).toBe(first.id);
+      expect(
+        (await store.findRunningTurn({ ...input, childRunId: "turn__1" }))?.id,
+      ).toBe(second.id);
+      expect(
+        await store.findRunningTurn({ ...input, childRunId: "turn__9" }),
+      ).toBeUndefined();
+    } finally {
+      await sql.end();
+    }
+  });
 });

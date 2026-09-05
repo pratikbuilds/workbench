@@ -7,7 +7,15 @@
 // does not compose with an inline mention popover.
 
 import { Avatar, Button } from "@corbits/react-ui";
-import { ArrowUp, CircleNotch, Paperclip, Stop, X } from "@corbits/icons";
+import {
+  ArrowUp,
+  CircleNotch,
+  Microphone,
+  Paperclip,
+  Stop,
+  X,
+} from "@corbits/icons";
+import { reportError } from "@corbits/error-sink";
 import {
   forwardRef,
   useEffect,
@@ -16,10 +24,11 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ChangeEvent, CSSProperties, KeyboardEvent } from "react";
+import type { ChangeEvent, KeyboardEvent } from "react";
 
-import { AVATAR_IDENTITY_CLASS, generatedAvatarStyle } from "./avatar-identity";
+import { CorbitAvatar, avatarClassForPrincipal } from "./avatar";
 import type { Part, ParticipantRecord } from "./api";
+import type { AgentDisplayNames } from "./agent-display-names";
 import {
   activeMentionQuery,
   filterMentionOptions,
@@ -79,6 +88,107 @@ export function insertTextAtCaret(
   const after = value.slice(caret);
   const text = `${before}${insertion}${after}`;
   return { text, caret: before.length + insertion.length };
+}
+
+export type SpeechRecognitionAlternativeLike = {
+  readonly transcript: string;
+};
+
+export type SpeechRecognitionResultLike = {
+  readonly isFinal: boolean;
+  readonly length: number;
+  readonly 0: SpeechRecognitionAlternativeLike;
+};
+
+export type SpeechRecognitionEventLike = {
+  readonly results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+export type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: unknown) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+function isSpeechRecognitionCtor(
+  value: unknown,
+): value is SpeechRecognitionCtor {
+  return typeof value === "function";
+}
+
+/** Browser `SpeechRecognition` / `webkitSpeechRecognition`, or null. */
+export function speechRecognitionConstructor(
+  global: object = globalThis,
+): SpeechRecognitionCtor | null {
+  if ("SpeechRecognition" in global) {
+    const ctor = Reflect.get(global, "SpeechRecognition");
+    if (isSpeechRecognitionCtor(ctor)) return ctor;
+  }
+  if ("webkitSpeechRecognition" in global) {
+    const ctor = Reflect.get(global, "webkitSpeechRecognition");
+    if (isSpeechRecognitionCtor(ctor)) return ctor;
+  }
+  return null;
+}
+
+function speechRecognitionErrorCode(event: unknown): string | null {
+  if (typeof event !== "object" || event === null) return null;
+  if (!("error" in event)) return null;
+  const { error } = event;
+  if (typeof error !== "string") return null;
+  return error;
+}
+
+function isBenignSpeechRecognitionError(code: string): boolean {
+  return code === "aborted" || code === "no-speech";
+}
+
+function detachDictation(rec: SpeechRecognitionLike) {
+  rec.onresult = null;
+  rec.onerror = null;
+  rec.onend = null;
+}
+
+export function transcriptFromSpeechResults(
+  results: ArrayLike<SpeechRecognitionResultLike>,
+): string {
+  let text = "";
+  for (const result of Array.from(results)) {
+    if (result.length === 0) continue;
+    text += result[0].transcript;
+  }
+  return text;
+}
+
+/**
+ * Drop a recognition transcript between `prefix` and `suffix`, inserting a
+ * space when the join would otherwise glue two words together.
+ */
+export function spliceDictationTranscript(
+  prefix: string,
+  suffix: string,
+  transcript: string,
+): { readonly text: string; readonly caret: number } {
+  const trimmed = transcript.trim();
+  if (trimmed.length === 0) {
+    return { text: `${prefix}${suffix}`, caret: prefix.length };
+  }
+  const head =
+    prefix.length === 0 || /\s$/u.test(prefix)
+      ? `${prefix}${trimmed}`
+      : `${prefix} ${trimmed}`;
+  const text =
+    suffix.length === 0 || /^\s/u.test(suffix)
+      ? `${head}${suffix}`
+      : `${head} ${suffix}`;
+  return { text, caret: head.length };
 }
 
 /**
@@ -326,6 +436,9 @@ export const Composer = forwardRef<
      * "Bring in…" group de-dupes against — omitted candidates are
      * already in the workbench. Defaults to empty. */
     readonly participants?: readonly ParticipantRecord[];
+    /** Resolved agent display names (CL-6424) — the popover rows show
+     * these, never raw handle slugs. */
+    readonly agentDisplayNames?: AgentDisplayNames;
     /** Workspace members not yet in this workbench — the "Bring in…"
      * group's person half. Defaults to empty (no group rendered). */
     readonly members?: readonly BringInMember[];
@@ -371,6 +484,7 @@ export const Composer = forwardRef<
     members = [],
     invitableAgents = [],
     bringInLoadError = null,
+    agentDisplayNames,
     onSend,
     onInviteAgent,
     onOpenAgentsSettings,
@@ -413,10 +527,107 @@ export const Composer = forwardRef<
   // instant a send starts, synchronously ahead of any render, so a second
   // call in the same tick is turned away (CL-7198).
   const sendInFlightRef = useRef(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const dictatePrefixRef = useRef("");
+  const dictateSuffixRef = useRef("");
+  const [listening, setListening] = useState(false);
+  const [dictateAvailable] = useState(
+    () => speechRecognitionConstructor() !== null,
+  );
+
+  function stopDictation() {
+    const rec = recognitionRef.current;
+    if (rec === null) return;
+    setListening(false);
+    rec.stop();
+  }
+
+  function abortDictation() {
+    const rec = recognitionRef.current;
+    if (rec === null) return;
+    recognitionRef.current = null;
+    setListening(false);
+    detachDictation(rec);
+    try {
+      rec.abort();
+    } catch {
+      // report-error-ignore: abort() after user Stop is InvalidStateError
+      // once recognition has already ended.
+    }
+  }
+
+  function applyDictationTranscript(transcript: string) {
+    const next = spliceDictationTranscript(
+      dictatePrefixRef.current,
+      dictateSuffixRef.current,
+      transcript,
+    );
+    setValue(next.text);
+    syncComposerSuggestState(next.text, next.caret);
+    requestAnimationFrame(() => {
+      textareaRef.current?.setSelectionRange(next.caret, next.caret);
+    });
+  }
+
+  function startDictation() {
+    abortDictation();
+    const Ctor = speechRecognitionConstructor();
+    if (Ctor === null) return;
+    const textarea = textareaRef.current;
+    const caret = textarea?.selectionStart ?? value.length;
+    dictatePrefixRef.current = value.slice(0, caret);
+    dictateSuffixRef.current = value.slice(caret);
+    const rec = new Ctor();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = (event) => {
+      applyDictationTranscript(transcriptFromSpeechResults(event.results));
+    };
+    rec.onerror = (event) => {
+      const code = speechRecognitionErrorCode(event);
+      if (code === null || !isBenignSpeechRecognitionError(code)) {
+        reportError(event, { operation: "composer.dictate" });
+      }
+      if (recognitionRef.current === rec) {
+        recognitionRef.current = null;
+        setListening(false);
+      }
+    };
+    rec.onend = () => {
+      if (recognitionRef.current !== rec) return;
+      setListening(false);
+    };
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+      setListening(true);
+    } catch (cause) {
+      reportError(cause, { operation: "composer.dictate.start" });
+      recognitionRef.current = null;
+    }
+  }
+
+  function toggleDictation() {
+    if (listening) {
+      stopDictation();
+      return;
+    }
+    startDictation();
+  }
 
   useEffect(() => {
     if (!running) setStopping(false);
   }, [running]);
+
+  useEffect(() => {
+    return () => {
+      const rec = recognitionRef.current;
+      if (rec === null) return;
+      detachDictation(rec);
+      recognitionRef.current = null;
+      rec.abort();
+    };
+  }, []);
 
   /** Auto-grow: the textarea reports its own content height, so the
    * measurement resets to the CSS-declared min-height before reading
@@ -449,6 +660,7 @@ export const Composer = forwardRef<
     ref,
     () => ({
       insertText: (text: string) => {
+        abortDictation();
         const textarea = textareaRef.current;
         const caret = textarea?.selectionStart ?? value.length;
         const result = insertTextAtCaret(value, caret, text);
@@ -459,6 +671,7 @@ export const Composer = forwardRef<
         });
       },
       setText: (text: string) => {
+        abortDictation();
         attachGenerationRef.current += 1;
         setValue(text);
         setMention(null);
@@ -481,7 +694,12 @@ export const Composer = forwardRef<
   const mentionOptions: readonly MentionOption[] =
     mention !== null
       ? filterMentionOptions(
-          mentionOptionsFromWorkbench(participants, members, invitableAgents),
+          mentionOptionsFromWorkbench(
+            participants,
+            members,
+            invitableAgents,
+            agentDisplayNames,
+          ),
           mention.query,
         )
       : [];
@@ -665,6 +883,7 @@ export const Composer = forwardRef<
     if (!canSendComposerAction(value, attachments, { sending, preparing })) {
       return;
     }
+    abortDictation();
     const payload: ComposerSendPayload =
       pendingInvites.length > 0
         ? { text: value, attachments, invite: pendingInvites }
@@ -826,25 +1045,22 @@ export const Composer = forwardRef<
                         event.preventDefault();
                         pickMention(option);
                       }}
-                      style={
-                        isAgent
-                          ? undefined
-                          : (generatedAvatarStyle(
-                              option.candidate.id,
-                            ) as CSSProperties)
-                      }
                     >
-                      <Avatar
-                        initials={option.candidate.label}
-                        label={option.candidate.label}
-                        tone={isAgent ? "agent" : "neutral"}
-                        size="sm"
-                        className={
-                          isAgent
-                            ? "chat-mention-avatar"
-                            : `chat-mention-avatar ${AVATAR_IDENTITY_CLASS}`
-                        }
-                      />
+                      {isAgent ? (
+                        <CorbitAvatar
+                          ariaLabel={option.candidate.label}
+                          size="sm"
+                          className="mention-avatar"
+                        />
+                      ) : (
+                        <Avatar
+                          initials={option.candidate.label}
+                          label={option.candidate.label}
+                          tone="neutral"
+                          size="sm"
+                          className={`mention-avatar ${avatarClassForPrincipal(option.candidate.id)}`}
+                        />
+                      )}
                       <span className="chat-mention-meta">
                         <span className="chat-mention-name">
                           {option.candidate.label}
@@ -939,6 +1155,7 @@ export const Composer = forwardRef<
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
+          readOnly={listening}
           rows={1}
         />
         <div className="chat-composer-actions">
@@ -960,44 +1177,74 @@ export const Composer = forwardRef<
           >
             {CHAT_STRINGS.composerKeyboardHint}
           </span>
-          {canStopComposer({ running }) ? (
+          <div className="chat-composer-submit-actions">
+            {dictateAvailable ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="chat-composer-icon-button chat-composer-mic"
+                data-listening={listening ? "true" : "false"}
+                aria-pressed={listening}
+                disabled={sending || preparing}
+                onClick={toggleDictation}
+                aria-label={
+                  listening
+                    ? CHAT_STRINGS.composerDictateStop
+                    : CHAT_STRINGS.composerDictate
+                }
+                title={
+                  listening
+                    ? CHAT_STRINGS.composerDictateStop
+                    : CHAT_STRINGS.composerDictate
+                }
+              >
+                <Microphone aria-hidden="true" />
+              </Button>
+            ) : null}
+            {canStopComposer({ running }) ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="chat-composer-icon-button"
+                disabled={stopping}
+                onClick={handleStop}
+                aria-label={CHAT_STRINGS.composerStop}
+                title={CHAT_STRINGS.composerStop}
+              >
+                <Stop aria-hidden="true" />
+              </Button>
+            ) : null}
             <Button
               type="button"
-              variant="ghost"
+              variant={sendVisualState === "empty" ? "ghost" : "primary"}
               size="sm"
               className="chat-composer-icon-button"
-              disabled={stopping}
-              onClick={handleStop}
-              aria-label={CHAT_STRINGS.composerStop}
-              title={CHAT_STRINGS.composerStop}
+              disabled={!canSend}
+              data-send-state={sendVisualState}
+              onClick={() => void send()}
+              aria-label={
+                sending
+                  ? CHAT_STRINGS.composerSending
+                  : CHAT_STRINGS.composerSend
+              }
+              title={
+                sending
+                  ? CHAT_STRINGS.composerSending
+                  : CHAT_STRINGS.composerSend
+              }
             >
-              <Stop aria-hidden="true" />
+              {sendVisualState === "sending" ? (
+                <CircleNotch
+                  className="chat-composer-send-spinner"
+                  aria-hidden="true"
+                />
+              ) : (
+                <ArrowUp aria-hidden="true" />
+              )}
             </Button>
-          ) : null}
-          <Button
-            type="button"
-            variant={sendVisualState === "empty" ? "ghost" : "primary"}
-            size="sm"
-            className="chat-composer-icon-button"
-            disabled={!canSend}
-            data-send-state={sendVisualState}
-            onClick={() => void send()}
-            aria-label={
-              sending ? CHAT_STRINGS.composerSending : CHAT_STRINGS.composerSend
-            }
-            title={
-              sending ? CHAT_STRINGS.composerSending : CHAT_STRINGS.composerSend
-            }
-          >
-            {sendVisualState === "sending" ? (
-              <CircleNotch
-                className="chat-composer-send-spinner"
-                aria-hidden="true"
-              />
-            ) : (
-              <ArrowUp aria-hidden="true" />
-            )}
-          </Button>
+          </div>
         </div>
       </div>
       <div

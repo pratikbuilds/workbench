@@ -82,7 +82,8 @@ function stubFetch() {
   }) as typeof fetch;
 }
 
-const { ChatWorkspace } = await import("../src/chat-workspace");
+const { ChatWorkspace, TEAM_AVATAR_STACK_LIMIT } =
+  await import("../src/chat-workspace");
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -148,6 +149,10 @@ describe("workbench header presence stack", () => {
 
     const avatars = harness.container.querySelectorAll(".chat-presence-avatar");
     expect(avatars).toHaveLength(2);
+    expect(
+      harness.container.querySelector(".chat-presence-stack"),
+    ).not.toBeNull();
+    expect(harness.container.querySelector(".chat-member-stack")).toBeNull();
     harness.unmount();
   });
 
@@ -182,6 +187,36 @@ describe("workbench header presence stack", () => {
     expect(
       harness.container.querySelectorAll(".chat-presence-avatar"),
     ).toHaveLength(0);
+    harness.unmount();
+  });
+
+  test("collapses anything past the member-stack limit into a +N chip", async () => {
+    stubFetch();
+    const harness = mount({
+      tenant: { kind: "ready", tenantId: "tnt_1" },
+      workbenchId: "ch_1",
+    });
+    await harness.settle();
+
+    const liveCount = TEAM_AVATAR_STACK_LIMIT + 4;
+    act(() => {
+      firstStream().emit("chat.presence.snapshot", {
+        members: Array.from({ length: liveCount }, (_, index) => ({
+          principalId: `prn_${String(index)}`,
+          lastActiveAt: "2026-01-01T00:00:00Z",
+        })),
+      });
+    });
+    await harness.settle();
+
+    expect(
+      harness.container.querySelectorAll(".chat-presence-avatar"),
+    ).toHaveLength(TEAM_AVATAR_STACK_LIMIT);
+    const overflow = harness.container.querySelector(
+      ".chat-presence-stack-overflow",
+    );
+    expect(overflow).not.toBeNull();
+    expect(overflow?.textContent).toBe("+4");
     harness.unmount();
   });
 });

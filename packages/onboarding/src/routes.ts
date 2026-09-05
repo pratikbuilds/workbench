@@ -287,9 +287,14 @@ async function recentlyConnectedCredential(
     );
     return match ? tenant : undefined;
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
+    // Never the raw cause detail — this path lists credentials after a
+    // connect and can see secret-shaped hub/parse errors (CL-7255).
+    const refId = reportError(cause, {
+      operation: "onboarding_duplicate_callback_recovery",
+      extra: { userId: args.userId },
+    });
     args.log(
-      `duplicate-callback recovery check failed for user ${args.userId}: ${message}`,
+      `duplicate-callback recovery check failed for user ${args.userId} [${refId}]`,
     );
     return undefined;
   }

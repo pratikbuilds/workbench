@@ -64,9 +64,21 @@ async function runProbe(
   const logPath = join(workspace, `probe-${logCounter}.log`);
   await writeFile(logPath, "");
 
+  // The parent process may have WORKBENCH_CHECK_CONCURRENCY set for the
+  // gate itself. Default-concurrency probes must not inherit it; tests that
+  // intend an override pass the var in extraEnv.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PROBE_LOG: logPath,
+    ...extraEnv,
+  };
+  if (!Object.hasOwn(extraEnv, "WORKBENCH_CHECK_CONCURRENCY")) {
+    delete env["WORKBENCH_CHECK_CONCURRENCY"];
+  }
+
   const child = Bun.spawn(["bun", "run", RUNNER, script], {
     cwd: workspace,
-    env: { ...process.env, PROBE_LOG: logPath, ...extraEnv },
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -165,6 +177,22 @@ describe("run-all", () => {
     expect(peakOverlap(result.log)).toBe(1);
     for (const name of WITH_PROBE) {
       expect(result.stdout).toContain(`probe ran in ${name}`);
+    }
+  });
+
+  test("default sequential run ignores ambient WORKBENCH_CHECK_CONCURRENCY", async () => {
+    const previous = process.env["WORKBENCH_CHECK_CONCURRENCY"];
+    process.env["WORKBENCH_CHECK_CONCURRENCY"] = "4";
+    try {
+      const result = await runProbe({}, SEQUENTIAL_SCRIPT);
+
+      expect(peakOverlap(result.log)).toBe(1);
+    } finally {
+      if (previous === undefined) {
+        delete process.env["WORKBENCH_CHECK_CONCURRENCY"];
+      } else {
+        process.env["WORKBENCH_CHECK_CONCURRENCY"] = previous;
+      }
     }
   });
 

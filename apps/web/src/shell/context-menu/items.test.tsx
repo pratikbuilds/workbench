@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import { spyOnReactUiToast } from "../../../test/react-ui-toast-mock";
 import type { ContextMenuEntry } from "@corbits/context-menu";
 import { WORKBENCHES_MUTATED_EVENT } from "@corbits/chat-ui";
+import * as errorSink from "@corbits/error-sink";
 
 const toastMock = spyOnReactUiToast();
 
@@ -211,6 +212,7 @@ describe("shellContextMenuFor: routine", () => {
 
   test("run-now does not invalidate routine queries when the run fails to start", async () => {
     const realFetch = globalThis.fetch;
+    const report = spyOn(errorSink, "reportError").mockReturnValue("ref_test");
     globalThis.fetch = mock(() =>
       Promise.resolve(
         new Response(JSON.stringify({ error: { message: "boom" } }), {
@@ -228,7 +230,13 @@ describe("shellContextMenuFor: routine", () => {
       }
       expect(toastMock).toHaveBeenCalledWith("Couldn't start the routine");
       expect(onRoutineRan).not.toHaveBeenCalled();
+      expect(report).toHaveBeenCalled();
+      expect(report.mock.calls[0]?.[1]).toEqual({
+        operation: "scheduled_workflow_run_now",
+        tenantId: "tenant-1",
+      });
     } finally {
+      report.mockRestore();
       globalThis.fetch = realFetch;
     }
   });

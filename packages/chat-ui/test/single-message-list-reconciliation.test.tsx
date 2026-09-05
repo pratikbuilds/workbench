@@ -64,7 +64,7 @@ const confirmedItem: MessageItem = {
 describe("one message list: a pending send reconciles in place under a stable key", () => {
   test("POST-first: sending, then the same key's props update to confirmed — one group throughout, same DOM node", async () => {
     const el = await render([pendingItem]);
-    const avatarBefore = el.querySelector(".chat-sender-avatar-button");
+    const avatarBefore = el.querySelector(".sender-avatar-button");
     expect(el.querySelectorAll(".chat-message-group")).toHaveLength(1);
     expect(el.querySelector(".chat-pending-glyph")).not.toBeNull();
 
@@ -72,7 +72,7 @@ describe("one message list: a pending send reconciles in place under a stable ke
 
     expect(el.querySelectorAll(".chat-message-group")).toHaveLength(1);
     expect(el.querySelector(".chat-pending-glyph")).toBeNull();
-    const avatarAfter = el.querySelector(".chat-sender-avatar-button");
+    const avatarAfter = el.querySelector(".sender-avatar-button");
     // Same `clientId` key means React updates the existing node's props
     // rather than unmounting and mounting a new one.
     expect(avatarAfter).not.toBeNull();

@@ -82,6 +82,8 @@ export type SidecarEventMap = {
     agentAddress: string;
     sessionId: string;
     event: unknown;
+    /** Occurrence child run id (`turn__<n>`) when the sidecar supplied it. */
+    childRunId?: string;
   };
 
   /** Notification. Emitted once when a sidecar's connection closes,

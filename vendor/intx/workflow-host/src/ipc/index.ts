@@ -163,6 +163,7 @@ export {
   type EventChannelReceiverOpts,
   type FrameReader,
   type FrameWriter,
+  type ReceivedEvent,
 } from "./event-channel";
 
 export {

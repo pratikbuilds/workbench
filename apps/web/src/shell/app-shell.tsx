@@ -123,17 +123,20 @@ export function AppShell({
     tenantId,
     canvasArtifact === null ? null : `artifact:${canvasArtifact.id}`,
     undefined,
-    artifactDoc === null
-      ? undefined
-      : {
-          doc: artifactDoc,
-          onSaved: (info) =>
-            setArtifactSaveState({
-              kind: "saved",
-              version: info.version,
-              savedAt: info.savedAt,
-            }),
-        },
+    {
+      ...(viewerPrincipalId === null ? {} : { principalId: viewerPrincipalId }),
+      ...(artifactDoc === null
+        ? {}
+        : {
+            doc: artifactDoc,
+            onSaved: (info: { version: number; savedAt: number }) =>
+              setArtifactSaveState({
+                kind: "saved",
+                version: info.version,
+                savedAt: info.savedAt,
+              }),
+          }),
+    },
   );
   const editingCoworkers = artifactPresence.members
     .filter(
@@ -213,6 +216,7 @@ export function AppShell({
             {...(artifactDoc !== null ? { artifactDoc } : {})}
             artifactSaveState={artifactSaveStateWithEditors}
             onArtifactTyping={artifactPresence.publishTyping}
+            presenceConnection={artifactPresence.connection}
           />
         </Suspense>
       ) : null}

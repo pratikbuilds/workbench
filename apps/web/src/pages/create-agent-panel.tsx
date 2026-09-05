@@ -27,8 +27,9 @@
 // Drafting fails closed, on purpose: if Myra can't draft a prompt
 // (unavailable, timed out, an unparseable reply), this panel never
 // falls back to a canned template — it surfaces the plain-language
-// failure and reveals a manual "System prompt" field in Advanced
-// instead, so the person can write their own and try again.
+// failure, keeps Advanced collapsed, and the disabled primary names
+// the blocker so the person can open Advanced, write their own
+// system prompt, and try again.
 //
 // The identity swatch is preview-only: `@corbits/agent-directory` has
 // no field to persist a chosen avatar tone today, so picking one only
@@ -38,7 +39,6 @@
 // lane).
 
 import {
-  Avatar,
   Button,
   Dialog,
   DialogBody,
@@ -50,8 +50,15 @@ import {
   IntakeForm,
   Textarea,
 } from "@corbits/react-ui";
-import type { AvatarTone, IntakeField } from "@corbits/react-ui";
+import type { IntakeField } from "@corbits/react-ui";
 import { useEffect, useState } from "react";
+import {
+  AVATAR_COLORS,
+  avatarColorClass,
+  CORBIT_DEFAULT_COLOR,
+  CorbitAvatar,
+} from "@corbits/chat-ui";
+import type { AvatarColor } from "@corbits/chat-ui";
 
 import { ApiQueryError } from "@corbits/api-query";
 
@@ -71,22 +78,16 @@ import { AgentSkillsPicker } from "./agent-skills-picker";
 // that true: one implementation, so a handle suggested or accepted here can
 // never be a shape the router refuses to resolve.
 
-function initialsFromName(name: string): string {
-  const [first, second] = name.trim().split(/\s+/).filter(Boolean);
-  if (first === undefined) return "?";
-  if (second === undefined) return first.slice(0, 2);
-  return `${first[0]}${second[0]}`;
+function submitErrorFromCause(
+  cause: unknown,
+  fallback: string,
+): { readonly message: string; readonly refId?: string } {
+  if (!(cause instanceof ApiQueryError)) return { message: fallback };
+  return {
+    message: cause.message,
+    ...(cause.refId !== undefined ? { refId: cause.refId } : {}),
+  };
 }
-
-const AVATAR_TONES: readonly {
-  readonly tone: AvatarTone;
-  readonly label: string;
-}[] = [
-  { tone: "neutral", label: "Grey" },
-  { tone: "agent", label: "Orange" },
-  { tone: "agent2", label: "Blue" },
-  { tone: "agent3", label: "Green" },
-];
 
 type FormValues = {
   readonly name: string;
@@ -145,7 +146,9 @@ function advancedFields(
               value: model.canonicalName,
               label: model.displayName ?? model.canonicalName,
             })),
-            help: "Left unset, Myra picks one — or the workbench default if drafting fails.",
+            help: draftFailed
+              ? "Left unset, the agent uses the workbench default."
+              : "Left unset, Myra picks one — or the workbench default if drafting fails.",
           },
         ];
   if (!draftFailed) return withModel;
@@ -197,10 +200,11 @@ const SUGGESTIONS: readonly Suggestion[] = [
   },
 ];
 
-/** The single reason "Get started" is disabled, in plain language — the
- * disabled state explains itself rather than leaving a person to guess.
- * `null` once nothing blocks submission. Purpose is never a gate — a
- * name alone is a supported happy path. */
+/** The single reason the primary is disabled, in plain language — the
+ * disabled label names the blocker rather than leaving "Get started"
+ * on a button that cannot be used. `null` once nothing blocks
+ * submission. Purpose is never a gate — a name alone is a supported
+ * happy path. */
 function blockedReason(
   values: FormValues,
   draftFailed: boolean,
@@ -210,7 +214,7 @@ function blockedReason(
     return "Fix the handle below — lowercase letters, digits, and hyphens only.";
   }
   if (draftFailed && values.manualSystemPrompt.trim() === "") {
-    return "Write a system prompt below to continue.";
+    return "Open Advanced and write a system prompt to continue.";
   }
   return null;
 }
@@ -233,12 +237,16 @@ export function CreateAgentPanel({
   readonly onCreated: (definition: AgentDefinition) => void;
 }) {
   const [values, setValues] = useState<FormValues>(EMPTY_VALUES);
-  const [tone, setTone] = useState<AvatarTone>("agent");
+  const [avatarColor, setAvatarColor] =
+    useState<AvatarColor>(CORBIT_DEFAULT_COLOR);
   const [handleTouched, setHandleTouched] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [draftFailed, setDraftFailed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<{
+    readonly message: string;
+    readonly refId?: string;
+  } | null>(null);
   const [modelsState, setModelsState] = useState<ModelsState>({
     kind: "idle",
   });
@@ -266,7 +274,7 @@ export function CreateAgentPanel({
 
   function reset() {
     setValues(EMPTY_VALUES);
-    setTone("agent");
+    setAvatarColor(CORBIT_DEFAULT_COLOR);
     setHandleTouched(false);
     setAdvancedOpen(false);
     setDraftFailed(false);
@@ -352,11 +360,11 @@ export function CreateAgentPanel({
         }
       } catch (cause) {
         setDraftFailed(true);
-        setAdvancedOpen(true);
         setSubmitError(
-          cause instanceof ApiQueryError
-            ? cause.message
-            : "Myra couldn't draft a starting prompt for this agent.",
+          submitErrorFromCause(
+            cause,
+            "Myra couldn't draft a starting prompt for this agent.",
+          ),
         );
         setSubmitting(false);
         return;
@@ -377,9 +385,7 @@ export function CreateAgentPanel({
       onCreated(created);
     } catch (cause) {
       setSubmitError(
-        cause instanceof ApiQueryError
-          ? cause.message
-          : "Could not create the agent.",
+        submitErrorFromCause(cause, "Could not create the agent."),
       );
     } finally {
       setSubmitting(false);
@@ -403,7 +409,15 @@ export function CreateAgentPanel({
         <DialogBody>
           {submitError !== null && (
             <p className="mb-3 text-sm text-destructive" role="alert">
-              {submitError}
+              {submitError.message}
+              {submitError.refId !== undefined ? (
+                <>
+                  <br />
+                  <span className="text-xs">
+                    Reference: {submitError.refId}
+                  </span>
+                </>
+              ) : null}
             </p>
           )}
           {modelsState.kind === "error" && (
@@ -413,27 +427,22 @@ export function CreateAgentPanel({
             </p>
           )}
 
-          <div className="create-agent-identity">
-            <Avatar
-              initials={initialsFromName(values.name)}
-              label={values.name.trim() === "" ? "New agent" : values.name}
-              tone={tone}
+          <div className="flex items-center gap-3">
+            <CorbitAvatar
+              ariaLabel={values.name.trim() === "" ? "New agent" : values.name}
+              color={avatarColor}
               size="lg"
             />
-            <div
-              role="group"
-              aria-label="Agent color"
-              className="create-agent-tone-row"
-            >
-              {AVATAR_TONES.map((entry) => (
+            <div role="group" aria-label="Agent color" className="flex gap-1.5">
+              {AVATAR_COLORS.map((color) => (
                 <button
-                  key={entry.tone}
+                  key={color}
                   type="button"
-                  aria-label={entry.label}
-                  aria-pressed={tone === entry.tone}
-                  className={`create-agent-tone-swatch create-agent-tone-${entry.tone}`}
+                  aria-label={`Choose ${color} avatar color`}
+                  aria-pressed={avatarColor === color}
+                  className={`size-6 cursor-pointer rounded-full border-2 border-transparent p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground aria-pressed:border-foreground ${avatarColorClass[color]}`}
                   disabled={submitting}
-                  onClick={() => setTone(entry.tone)}
+                  onClick={() => setAvatarColor(color)}
                 />
               ))}
             </div>
@@ -462,15 +471,12 @@ export function CreateAgentPanel({
           </label>
 
           <div className="mt-3 flex flex-col gap-2">
-            {blocked !== null && (
-              <p className="text-xs text-muted-foreground">{blocked}</p>
-            )}
             <Button
               type="button"
               onClick={() => void handleSubmit()}
               disabled={submitting || blocked !== null}
             >
-              {submitting ? "Creating…" : "Get started"}
+              {submitting ? "Creating…" : (blocked ?? "Get started")}
             </Button>
           </div>
 

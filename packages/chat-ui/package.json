@@ -36,7 +36,7 @@
     "@intx/inference": "workspace:*",
     "@types/bun": "catalog:",
     "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.1",
+    "@types/react-dom": "catalog:",
     "typescript": "catalog:"
   }
 }

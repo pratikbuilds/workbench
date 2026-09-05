@@ -155,4 +155,4 @@ async function main(): Promise<void> {
   reportAndExit("check:web-utilities", report);
 }
 
-await main();
+if (import.meta.main) await main();

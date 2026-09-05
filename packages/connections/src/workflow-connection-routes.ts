@@ -84,8 +84,8 @@ export type CreateWorkflowConnectionRoutesDeps = {
    * its own (CL-7384), so a caller always supplies one. */
   readonly registry: Readonly<Record<string, ConnectorDescriptor>>;
   /** A port, not a raw `db` handle — keeps this package decoupled from
-   * the credentials schema, mirroring `@corbits/routines`' routes.ts
-   * taking ports rather than reaching for database access directly.
+   * the credentials schema by taking ports rather than reaching for
+   * database access directly.
    * `apps/hub` supplies `@intx/db`'s `resolveCredentialRequirement`,
    * curried over `db` and the `"tenant"` source (the same resolution
    * `buildCredentialDelivery` uses at agent-launch time to decide whether

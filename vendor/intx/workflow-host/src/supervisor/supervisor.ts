@@ -92,6 +92,7 @@ import {
   type ControlPayload,
   type EventPayload,
   type OutboundMessagePayload,
+  type ReceivedEvent,
 } from "../ipc/index";
 
 import {
@@ -356,7 +357,7 @@ export type SpawnOpts = {
    * the child publishes. Mirrors the existing `agent.event` event
    * sink the host exposes; the supervisor is the in-host translator.
    */
-  onInferenceEvent: (event: EventPayload) => void;
+  onInferenceEvent: (event: EventPayload, childRunId?: string) => void;
 };
 
 export type SpawnResult = {
@@ -2143,7 +2144,7 @@ export function createWorkflowSupervisor(
     hmacKey: Uint8Array;
     ipcKeypair: { privateKey: Uint8Array; publicKey: Uint8Array };
     handle: SubprocessHandle;
-    onInferenceEvent: (event: EventPayload) => void;
+    onInferenceEvent: (event: EventPayload, childRunId?: string) => void;
   }): Promise<{
     wiring: ChildWiring;
     readyPromise: Promise<{ childPid: number }>;
@@ -4254,7 +4255,7 @@ type ActiveState = {
   controlSender: ControlChannelSender;
   channelId: string;
   eventPump: Promise<void>;
-  onInferenceEvent: (event: EventPayload) => void;
+  onInferenceEvent: (event: EventPayload, childRunId?: string) => void;
   mailUnsubscribe: (() => void) | null;
   credentialsSnapshot: CredentialsSnapshot | null;
   /**
@@ -4325,7 +4326,7 @@ type SpawnContext = {
   definitionHash: string;
   /** Warm-keep flag carried on respawn env (unchanged across recycle). */
   warmKeep: boolean;
-  onInferenceEvent: (event: EventPayload) => void;
+  onInferenceEvent: (event: EventPayload, childRunId?: string) => void;
   spawnedAt: number;
 };
 
@@ -4375,11 +4376,11 @@ function defaultNow(): number {
  * to the supervisor's shutdown path.
  */
 async function pumpEvents(
-  iter: AsyncGenerator<EventPayload, void, void>,
-  onInferenceEvent: (event: EventPayload) => void,
+  iter: AsyncGenerator<ReceivedEvent, void, void>,
+  onInferenceEvent: (event: EventPayload, childRunId?: string) => void,
 ): Promise<void> {
-  for await (const event of iter) {
-    onInferenceEvent(event);
+  for await (const received of iter) {
+    onInferenceEvent(received.event, received.childRunId);
   }
 }
 

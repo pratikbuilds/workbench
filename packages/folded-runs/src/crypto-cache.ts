@@ -2,7 +2,9 @@
 // key stays active — mirroring the per-instance signing-key cache the
 // platform's own mail route keeps. A caller picks its own key (a
 // workbench id, an instance id, ...); this module knows nothing about
-// what the key means.
+// what the key means. Independent instances mint independent keys for
+// the same string, so a host that has several mail senders constructs
+// one cache and passes it to each of them.
 import { createEd25519Crypto, generateKeyPair } from "@intx/crypto";
 import { createExpiringMap } from "@corbits/collections";
 import type { CryptoProvider } from "@intx/types/runtime";

@@ -17,6 +17,10 @@
 import { isAgentAddress } from "@corbits/chat/mentions";
 import { handleFromName } from "@corbits/chat/participants";
 import type { ParticipantRecord } from "./api";
+import {
+  displayNameForAddress,
+  type AgentDisplayNames,
+} from "./agent-display-names";
 
 export type MentionCandidate = {
   readonly id: string;
@@ -41,19 +45,24 @@ function readableLabel(handle: string): string {
  * The mentionable agent candidates for a workbench: its agent-address
  * participants (the same set `mentionedParticipants` fans a copy to on the
  * server), each keyed by its own settings-held handle so a picked candidate
- * always inserts text the server will actually match. Kept agent-only so
- * the composer's `/summarize` path (which needs an agent address) stays
- * honest when it reads from the same helper via the `agents` prop.
+ * always inserts text the server will actually match — while the row shows
+ * the agent's resolved display name (CL-6424), never the raw slug. Kept
+ * agent-only so the composer's `/summarize` path (which needs an agent
+ * address) stays honest when it reads from the same helper via the
+ * `agents` prop.
  */
 export function mentionCandidatesFromParticipants(
   participants: readonly ParticipantRecord[],
+  displayNames?: AgentDisplayNames,
 ): readonly MentionCandidate[] {
   return participants
     .filter((participant) => isAgentAddress(participant.address))
     .map((participant) => ({
       id: participant.address,
       handle: participant.handle,
-      label: readableLabel(participant.handle),
+      label:
+        displayNameForAddress(participant.address, displayNames) ??
+        readableLabel(participant.handle),
     }));
 }
 
@@ -156,6 +165,7 @@ export function mentionOptionsFromWorkbench(
   participants: readonly ParticipantRecord[],
   members: readonly BringInMember[],
   invitableAgents: readonly BringInAgentDefinition[],
+  displayNames?: AgentDisplayNames,
 ): readonly MentionOption[] {
   const agentParticipants: MentionOption[] = participants
     .filter((participant) => isAgentAddress(participant.address))
@@ -164,7 +174,9 @@ export function mentionOptionsFromWorkbench(
       candidate: {
         id: participant.address,
         handle: participant.handle,
-        label: readableLabel(participant.handle),
+        label:
+          displayNameForAddress(participant.address, displayNames) ??
+          readableLabel(participant.handle),
       },
     }));
   const peopleParticipants: MentionOption[] = participants

@@ -52,7 +52,9 @@ export function SettingsRoute({
   // `sections` while its probe is still resolving, same as when it's
   // genuinely denied — wait for every gate to settle before treating a
   // miss as final, or a deep link to an about-to-be-allowed section would
-  // bounce away before its probe finishes.
+  // bounce away before its probe finishes. `error` is settled: the
+  // registry withholds the section and the nav shows a couldn't-check
+  // state rather than pretending the principal is unauthorized.
   const accessSettled =
     access.people !== "loading" &&
     access.roles !== "loading" &&

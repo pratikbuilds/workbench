@@ -28,11 +28,6 @@ apps/hub/src/index.ts	1	email = undefined;
 apps/hub/src/index.ts	1	log.warn(
 apps/hub/src/index.ts	1	sidecarAllocationLog.error`Sidecar allocation reconciliation failed: ${error instanceof Error ? error.message : String(error)}`;
 apps/hub/src/mail-redelivery.ts	1	log.warn`could not wake ${recipient} ahead of redelivery: ${
-apps/hub/src/routine-launcher.ts	1	const reason =
-apps/hub/src/routine-launcher.ts	1	const reason = err instanceof Error ? err.message : String(err);
-apps/hub/src/routine-scheduler.ts	1	const reason = err instanceof Error ? err.message : String(err);
-apps/hub/src/routine-scheduler.ts	1	log.error`marking routine ${claimed.id}'s failed fire also failed: ${
-apps/hub/src/routine-scheduler.ts	1	log.error`routine scheduler tick failed: ${
 apps/hub/src/shutdown.ts	1	return { kind: "failed", error };
 apps/hub/src/templates/template-block-routes.ts	1	const message = cause instanceof Error ? cause.message : String(cause);
 apps/sidecar/src/atomic-write.ts	1	logger.warn`parent-dir fsync failed for ${path}; durability is degraded but the file is renamed and fsynced — ${err instanceof Error ? err.message : String(err)}`;
@@ -75,8 +70,6 @@ apps/web/src/connect-service-actions.ts	1	const message =
 apps/web/src/connect-service-actions.ts	1	return { ok: false, message: "Couldn't connect. Try again." };
 apps/web/src/connect-service-actions.ts	2	const message =
 apps/web/src/deployment-capabilities-api.ts	1	return {
-apps/web/src/global-routines.ts	1	toast(
-apps/web/src/global-routines.ts	2	toast(
 apps/web/src/last-workbench.ts	1	// A private-browsing tab with storage disabled loses this signal —
 apps/web/src/last-workbench.ts	1	return null;
 apps/web/src/onboarding.ts	1	return { kind: "error" };
@@ -103,9 +96,7 @@ apps/web/src/session.ts	1	return {
 apps/web/src/session.ts	2	return {
 apps/web/src/session.ts	3	return {
 apps/web/src/session.ts	4	return {
-apps/web/src/settings-access.ts	1	return "denied";
 apps/web/src/shell/context-menu/items.tsx	1	toast("Couldn't copy the link");
-apps/web/src/shell/routine-panel.tsx	1	setSaveState("error");
 apps/web/src/shell/workbench-list.tsx	1	// Revert the optimistic title on failure; the list will refetch on
 apps/web/src/shell/workbench-list.tsx	1	setPinned(!next);
 packages/access-policy/src/policy.ts	1	return [];
@@ -133,7 +124,6 @@ packages/chat-ui/src/timeline.tsx	1	toast(CHAT_STRINGS.copyTextError);
 packages/chat-ui/src/tool-activity.ts	1	return output;
 packages/chat-ui/src/use-optimistic-sends.ts	1	if (cause instanceof ChatApiError && cause.status === 403) {
 packages/chat-ui/src/use-thread-navigation.ts	1	toast(CHAT_STRINGS.forkThreadError);
-packages/chat-ui/src/use-workbench-stream.ts	1	onEventRef.current(eventType, message.data);
 packages/chat/src/platform-adapter.ts	1	continue;
 packages/chat/src/platform-adapter.ts	1	wakeLogger.error`drift check for ${binding.roomAddress} (run ${live.run.id}) failed, leaving it as-is: ${
 packages/chat/src/platform-adapter.ts	1	wakeLogger.error`inference-source reconcile for ${binding.roomAddress} (run ${run.id}) failed, leaving it as-is: ${
@@ -178,7 +168,6 @@ packages/granola-tools/src/tool.ts	1	return null;
 packages/granola-tools/src/tool.ts	1	return {
 packages/granola-tools/src/tool.ts	2	return {
 packages/inbox/src/routes.ts	1	publishLog.error(
-packages/interaction-tools/src/tool.ts	1	if (err instanceof NoOwnChannelError) {
 packages/jimmy-agent/src/gif-search-tool.ts	1	return false;
 packages/jimmy-agent/src/gif-search-tool.ts	1	return null;
 packages/jimmy-agent/src/gif-search-tool.ts	1	return {
@@ -211,7 +200,6 @@ packages/ollama-adapter/src/inline-tool-json.ts	1	return false;
 packages/ollama-adapter/src/inline-tool-json.ts	1	return { kind: "incomplete" };
 packages/onboarding/src/pending-seed.ts	1	return drop();
 packages/onboarding/src/routes.ts	1	// Neither `ProvisionError` nor `CliError` messages are safe to show
-packages/onboarding/src/routes.ts	1	const message = cause instanceof Error ? cause.message : String(cause);
 packages/onboarding/src/routes.ts	1	if (cause instanceof ProvisionError) {
 packages/onboarding/src/routes.ts	1	return c.json(
 packages/presence/src/artifact-persistence.ts	1	deps.onSnapshotError?.(key, error);
@@ -223,15 +211,6 @@ packages/presence/src/routes.ts	1	return c.json(
 packages/reddit-tools/src/tool.ts	1	return null;
 packages/reddit-tools/src/tool.ts	1	return {
 packages/reddit-tools/src/tool.ts	2	return {
-packages/routines-tools/src/tool.ts	1	return errorResult(call.id, err);
-packages/routines-tools/src/tool.ts	1	return once;
-packages/routines-tools/src/tool.ts	1	return value;
-packages/routines-tools/src/tool.ts	2	return errorResult(call.id, err);
-packages/routines-tools/src/tool.ts	3	return errorResult(call.id, err);
-packages/routines/src/cron.ts	1	return false;
-packages/routines/src/cron.ts	2	return false;
-packages/routines/src/routes.ts	1	log.error(
-packages/routines/src/schedule-language.ts	1	return null;
 packages/sandbox-sidecar/src/provisioner.ts	1	log.error`failed to sweep obsolete unit ${externalRef} for allocation ${allocationId}: ${
 packages/sandbox-sidecar/src/provisioner.ts	1	return rejected(...classify(error, "destroy_unit_failed"));
 packages/sandbox-sidecar/src/provisioner.ts	1	return rejected(...classify(error, "start_unit_failed"));

@@ -3,8 +3,11 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { ApiQueryError } from "@corbits/api-query";
+
 import {
   clearAgentModel,
+  draftAgentDefinition,
   getAgentDefinitionBySlug,
   listCatalogModels,
   listRoutineRunFires,
@@ -341,5 +344,88 @@ describe("clearAgentModel", () => {
 
     await clearAgentModel("tnt_1", "wfd_1");
     expect(calls[0]?.method).toBe("DELETE");
+  });
+});
+
+const DRAFT_FAILED_MESSAGE =
+  "Myra couldn't draft a starting prompt for that. Write one yourself, or try again.";
+
+describe("draftAgentDefinition errors", () => {
+  test("keeps the envelope userMessage and refId on a 422", async () => {
+    stubFetch(() =>
+      json(
+        {
+          error: {
+            code: "drafting_failed",
+            userMessage: DRAFT_FAILED_MESSAGE,
+            refId: "ref_draft_1",
+          },
+        },
+        422,
+      ),
+    );
+
+    try {
+      await draftAgentDefinition("tnt_1", { name: "Research Buddy" });
+      throw new Error("expected draftAgentDefinition to reject");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiQueryError);
+      const error = err as ApiQueryError;
+      expect(error.message).toBe(DRAFT_FAILED_MESSAGE);
+      expect(error.refId).toBe("ref_draft_1");
+      expect(error.status).toBe(422);
+    }
+  });
+
+  test("keeps the envelope userMessage and refId on a 500", async () => {
+    stubFetch(() =>
+      json(
+        {
+          error: {
+            code: "internal_error",
+            userMessage: "Something went wrong. Please try again.",
+            refId: "ref_sink_1",
+          },
+        },
+        500,
+      ),
+    );
+
+    try {
+      await draftAgentDefinition("tnt_1", { name: "Research Buddy" });
+      throw new Error("expected draftAgentDefinition to reject");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiQueryError);
+      const error = err as ApiQueryError;
+      expect(error.message).toBe("Something went wrong. Please try again.");
+      expect(error.refId).toBe("ref_sink_1");
+      expect(error.status).toBe(500);
+    }
+  });
+
+  test("does not treat a legacy {code, message} body as an envelope", async () => {
+    stubFetch(() =>
+      json(
+        {
+          error: {
+            code: "drafting_failed",
+            message:
+              "MyraAgentDefinitionDraftingUnavailableError: no myra\n    at draft",
+          },
+        },
+        422,
+      ),
+    );
+
+    try {
+      await draftAgentDefinition("tnt_1", { name: "Research Buddy" });
+      throw new Error("expected draftAgentDefinition to reject");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiQueryError);
+      const error = err as ApiQueryError;
+      expect(error.message).toBe("The server answered 422.");
+      expect(error.refId).toBeUndefined();
+      expect(error.message).not.toContain("no myra");
+    }
   });
 });

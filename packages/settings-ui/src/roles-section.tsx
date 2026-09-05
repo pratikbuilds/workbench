@@ -218,7 +218,7 @@ export function RolesTable({
         <TableRow>
           <TableHead>Name</TableHead>
           <TableHead>Description</TableHead>
-          <TableHead>Actions</TableHead>
+          <TableHead className="settings-actions-cell">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -243,7 +243,7 @@ export function RolesTable({
               )}
             </TableCell>
             <TableCell>{role.description ?? ""}</TableCell>
-            <TableCell>
+            <TableCell className="settings-actions-cell">
               {role.isSystem ? (
                 <span className="settings-field-hint">
                   {SETTINGS_STRINGS.rolesSystemImmutableNote}

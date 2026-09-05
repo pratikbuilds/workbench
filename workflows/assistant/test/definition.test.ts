@@ -118,7 +118,6 @@ test("the agent pins memory, capability, and the manager-tools bundles at the ve
   expect(ASSISTANT_TOOL_PACKAGE_PINS.map((pin) => pin.name)).toEqual([
     "@corbits/memory-tools",
     "@corbits/capability-tools",
-    "@corbits/routines-tools",
     "@corbits/agent-directory-tools",
     "@corbits/connections-tools",
     "@corbits/catalog-tools",

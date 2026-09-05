@@ -29,7 +29,58 @@ const noopPush: WorkflowPusher = async () => ({
   outcome: "pushed" as const,
   commitSha: "a".repeat(40),
 });
-const noopPublishToolRegistry = async () => undefined;
+const TOOLS_ASSET_ID = "ast_corbits_tools";
+const SEEDED_MEMORY_TARBALL = {
+  filename: "corbits-memory-tools-0.0.4.tgz",
+  size: 12,
+  integrity: "sha512-seeded",
+};
+
+function corbitsToolsAssetRow(tenantId: string) {
+  return {
+    id: TOOLS_ASSET_ID,
+    tenantId,
+    kind: "package-registry",
+    name: "corbits-tools",
+    displayName: null,
+    creatorPrincipalId: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    origin: { tenantId, direct: true },
+  };
+}
+
+function corbitsToolsRegistryResponse(
+  method: string,
+  path: string,
+  tenantId: string,
+  tarballs:
+    | readonly { filename: string; size: number; integrity: string }[]
+    | "missing",
+): { status: number; data: unknown; cookies: string[] } | undefined {
+  const inheritedList = `/api/tenants/${tenantId}/assets?kind=package-registry&inherited=true`;
+  const localList = `/api/tenants/${tenantId}/assets?kind=package-registry&inherited=false`;
+  if (method === "GET" && (path === inheritedList || path === localList)) {
+    if (tarballs === "missing") {
+      return { status: 200, data: [], cookies: [] };
+    }
+    return {
+      status: 200,
+      data: [corbitsToolsAssetRow(tenantId)],
+      cookies: [],
+    };
+  }
+  if (
+    method === "GET" &&
+    path === `/api/tenants/${tenantId}/assets/${TOOLS_ASSET_ID}/tarballs`
+  ) {
+    if (tarballs === "missing") {
+      return { status: 200, data: [], cookies: [] };
+    }
+    return { status: 200, data: [...tarballs], cookies: [] };
+  }
+  return undefined;
+}
 
 function collector() {
   const lines: string[] = [];
@@ -41,6 +92,13 @@ function firstLoginSeedHub(args: { expectedParentId?: string }) {
   const startedRuns: string[] = [];
   const tarballPuts: string[] = [];
   const api: ApiCall = async (method, path, body) => {
+    const registry = corbitsToolsRegistryResponse(
+      method,
+      path,
+      TENANT_ID,
+      "missing",
+    );
+    if (registry !== undefined) return registry;
     if (path.includes("/tarballs/")) {
       tarballPuts.push(`${method} ${path}`);
       throw new Error(`signup must not pack: ${method} ${path}`);
@@ -148,8 +206,38 @@ function firstLoginSeedHub(args: { expectedParentId?: string }) {
     ) {
       return { status: 200, data: [], cookies: [] };
     }
-    if (method === "GET" && path === `/api/tenants/${TENANT_ID}/routines`) {
-      return { status: 200, data: { items: [] }, cookies: [] };
+    if (
+      method === "GET" &&
+      path.startsWith(`/api/tenants/${TENANT_ID}/workflows/definitions`)
+    ) {
+      return {
+        status: 200,
+        data: {
+          data: [
+            {
+              id: "wfd_digest",
+              tenantId: TENANT_ID,
+              name: "workbench-digest",
+              currentVersion: "1",
+              status: "deployed",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+          nextCursor: null,
+        },
+        cookies: [],
+      };
+    }
+    if (
+      method === "PUT" &&
+      path === `/api/tenants/${TENANT_ID}/agent-definitions/wfd_digest/status`
+    ) {
+      return {
+        status: 200,
+        data: { id: "wfd_digest", status: "stopped" },
+        cookies: [],
+      };
     }
     if (
       method === "GET" &&
@@ -254,7 +342,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userId: "user_1",
       userEmail: "alice@example.com",
       userEmailVerified: true,
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log: collector().log,
     });
@@ -314,7 +401,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmail: "alice@example.com",
       userEmailVerified: true,
       displayName: "Alice's Lab",
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log: collector().log,
     });
@@ -350,7 +436,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
         userEmail: "alice@example.com",
         userEmailVerified: true,
         displayName: "Alice's Lab",
-        publishToolRegistry: noopPublishToolRegistry,
         pushWorkflow: noopPush,
         log: collector().log,
       }),
@@ -360,7 +445,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
   test("zero principals with no seed model: provisions the bench and reports the seed skip loudly", async () => {
     let principalsCalls = 0;
     const { lines, log } = collector();
-    const publishedTenants: string[] = [];
     const api: ApiCall = async (method, path, body) => {
       if (method === "GET" && path === "/api/me/principals") {
         principalsCalls += 1;
@@ -422,9 +506,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmail: "alice@example.com",
       userEmailVerified: true,
       displayName: "Alice's Lab",
-      publishToolRegistry: async ({ tenantId }) => {
-        publishedTenants.push(tenantId);
-      },
       pushWorkflow: noopPush,
       log,
     });
@@ -432,7 +513,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
     expect(result.kind).toBe("provisioned");
     if (result.kind !== "provisioned") throw new Error("unreachable");
     expect(result.seeded).toBe(false);
-    expect(publishedTenants).toEqual([TENANT_ID]);
     expect(result.seedSkipReason).toContain("ANTHROPIC_API_KEY");
     expect(lines.some((line) => line.includes("ANTHROPIC_API_KEY"))).toBe(true);
   });
@@ -463,7 +543,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userId: "user_1",
       userEmail: "alice@example.com",
       userEmailVerified: true,
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log,
     });
@@ -487,7 +566,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       displayName: "Alice's Lab",
       operatorTenantId: "ten_operator",
       seedModel: MODEL,
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log,
     });
@@ -501,10 +579,9 @@ describe("provisionPersonalTenantIfNeeded", () => {
     expect(tarballPuts).toEqual([]);
   });
 
-  test("an unparented personal root bench publishes corbits-tools before seeding", async () => {
+  test("an unparented personal root bench does not publish corbits-tools; provision only deploys workflows", async () => {
     const { api, tarballPuts } = firstLoginSeedHub({});
     const { log } = collector();
-    const publishedTenants: string[] = [];
     const result = await provisionPersonalTenantIfNeeded({
       api,
       cookies: ["session=abc"],
@@ -514,9 +591,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmailVerified: true,
       displayName: "Alice's Lab",
       seedModel: MODEL,
-      publishToolRegistry: async ({ tenantId }) => {
-        publishedTenants.push(tenantId);
-      },
       pushWorkflow: noopPush,
       log,
     });
@@ -527,7 +601,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       tenantSlug: TENANT_SLUG,
       seeded: true,
     });
-    expect(publishedTenants).toEqual([TENANT_ID]);
     expect(tarballPuts).toEqual([]);
   });
 
@@ -558,6 +631,13 @@ describe("provisionPersonalTenantIfNeeded", () => {
     });
 
     const api: ApiCall = async (method, path, body) => {
+      const registry = corbitsToolsRegistryResponse(
+        method,
+        path,
+        TENANT_ID,
+        "missing",
+      );
+      if (registry !== undefined) return registry;
       if (method === "GET" && path === "/api/me/principals") {
         return membership();
       }
@@ -663,8 +743,38 @@ describe("provisionPersonalTenantIfNeeded", () => {
       ) {
         return { status: 200, data: [], cookies: [] };
       }
-      if (method === "GET" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        return { status: 200, data: { items: [] }, cookies: [] };
+      if (
+        method === "GET" &&
+        path.startsWith(`/api/tenants/${TENANT_ID}/workflows/definitions`)
+      ) {
+        return {
+          status: 200,
+          data: {
+            data: [
+              {
+                id: "wfd_digest",
+                tenantId: TENANT_ID,
+                name: "workbench-digest",
+                currentVersion: "1",
+                status: "deployed",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+            nextCursor: null,
+          },
+          cookies: [],
+        };
+      }
+      if (
+        method === "PUT" &&
+        path === `/api/tenants/${TENANT_ID}/agent-definitions/wfd_digest/status`
+      ) {
+        return {
+          status: 200,
+          data: { id: "wfd_digest", status: "stopped" },
+          cookies: [],
+        };
       }
       if (
         method === "GET" &&
@@ -726,7 +836,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmailVerified: true,
       displayName: "Alice's Lab",
       seedModel: MODEL,
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log: collector().log,
     });
@@ -742,7 +851,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmail: "alice@example.com",
       userEmailVerified: true,
       seedModel: MODEL,
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log,
     });
@@ -752,11 +860,10 @@ describe("provisionPersonalTenantIfNeeded", () => {
       seeded: true,
       tenantId: "ten_new",
     });
-    // Attempt 1 fails creating the echo asset. The retry re-runs from
-    // scratch: one create call per default workflow — echo, assistant,
-    // workbench-digest, last-30-days-research — on top of the one failed
-    // attempt.
-    expect(assetCreateAttempts).toBe(5);
+    // Attempt 1 fails creating the (only) default workflow's asset. The
+    // retry re-runs from scratch: one create call for the default set
+    // (assistant, CL-7074), on top of the one failed attempt.
+    expect(assetCreateAttempts).toBe(2);
   });
 
   test("a fully seeded personal bench reports existing-member with seeded: true, and backfills a grant added to SEED_GRANTS after it was provisioned", async () => {
@@ -778,8 +885,11 @@ describe("provisionPersonalTenantIfNeeded", () => {
         ),
     );
     const grantsPosted: { resource: string; action: string }[] = [];
-    const publishedTenants: string[] = [];
     const api: ApiCall = async (method, path, body) => {
+      const registry = corbitsToolsRegistryResponse(method, path, TENANT_ID, [
+        SEEDED_MEMORY_TARBALL,
+      ]);
+      if (registry !== undefined) return registry;
       if (method === "GET" && path === "/api/me/principals") {
         return {
           status: 200,
@@ -890,9 +1000,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmail: "alice@example.com",
       userEmailVerified: true,
       // No seedModel needed: nothing left to seed on the workflow side.
-      publishToolRegistry: async ({ tenantId }) => {
-        publishedTenants.push(tenantId);
-      },
       pushWorkflow: noopPush,
       log: collector().log,
     });
@@ -902,13 +1009,16 @@ describe("provisionPersonalTenantIfNeeded", () => {
       seeded: true,
       tenantId: "ten_new",
     });
-    expect(publishedTenants).toEqual([TENANT_ID]);
     // Exactly the one grant this tenant was missing — no more, no less.
     expect(grantsPosted).toEqual([missingGrant]);
   });
 
   test("a grant-reconcile failure is reported, not thrown -- sign-in still succeeds for a fully seeded bench", async () => {
     const api: ApiCall = async (method, path) => {
+      const registry = corbitsToolsRegistryResponse(method, path, TENANT_ID, [
+        SEEDED_MEMORY_TARBALL,
+      ]);
+      if (registry !== undefined) return registry;
       if (method === "GET" && path === "/api/me/principals") {
         return {
           status: 200,
@@ -998,7 +1108,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userId: "user_1",
       userEmail: "alice@example.com",
       userEmailVerified: true,
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log: collector().log,
     });
@@ -1016,8 +1125,14 @@ describe("provisionPersonalTenantIfNeeded", () => {
     // not depend on a seed credential that may never exist. Seeding itself is
     // skipped (nothing to seed with); the user is not stranded in a loop.
     let assetListCalls = 0;
-    const publishedTenants: string[] = [];
     const api: ApiCall = async (method, path) => {
+      const registry = corbitsToolsRegistryResponse(
+        method,
+        path,
+        TENANT_ID,
+        "missing",
+      );
+      if (registry !== undefined) return registry;
       if (method === "GET" && path === "/api/me/principals") {
         return {
           status: 200,
@@ -1093,9 +1208,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmail: "alice@example.com",
       userEmailVerified: true,
       // No seedModel — hub without ANTHROPIC_API_KEY.
-      publishToolRegistry: async ({ tenantId }) => {
-        publishedTenants.push(tenantId);
-      },
       pushWorkflow: noopPush,
       log: collector().log,
     });
@@ -1108,7 +1220,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       seeded: false,
       tenantId: "ten_new",
     });
-    expect(publishedTenants).toEqual([TENANT_ID]);
     // Completeness was checked (tenant-local assets listed) even without a
     // seed model — membership recovery does not short-circuit before that.
     expect(assetListCalls).toBe(1);
@@ -1125,6 +1236,13 @@ describe("provisionPersonalTenantIfNeeded", () => {
     const startedRuns: string[] = [];
 
     const api: ApiCall = async (method, path, body) => {
+      const registry = corbitsToolsRegistryResponse(
+        method,
+        path,
+        TENANT_ID,
+        "missing",
+      );
+      if (registry !== undefined) return registry;
       if (method === "GET" && path === "/api/me/principals") {
         return {
           status: 200,
@@ -1180,7 +1298,11 @@ describe("provisionPersonalTenantIfNeeded", () => {
         listedLocal = true;
         return { status: 200, data: [], cookies: [] };
       }
-      if (method === "GET" && path.includes("inherited=true")) {
+      if (
+        method === "GET" &&
+        path.includes("kind=workflow") &&
+        path.includes("inherited=true")
+      ) {
         listedInherited = true;
         throw new Error("must not list inherited assets for seed completeness");
       }
@@ -1234,8 +1356,38 @@ describe("provisionPersonalTenantIfNeeded", () => {
       ) {
         return { status: 200, data: [], cookies: [] };
       }
-      if (method === "GET" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        return { status: 200, data: { items: [] }, cookies: [] };
+      if (
+        method === "GET" &&
+        path.startsWith(`/api/tenants/${TENANT_ID}/workflows/definitions`)
+      ) {
+        return {
+          status: 200,
+          data: {
+            data: [
+              {
+                id: "wfd_digest",
+                tenantId: TENANT_ID,
+                name: "workbench-digest",
+                currentVersion: "1",
+                status: "deployed",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+            nextCursor: null,
+          },
+          cookies: [],
+        };
+      }
+      if (
+        method === "PUT" &&
+        path === `/api/tenants/${TENANT_ID}/agent-definitions/wfd_digest/status`
+      ) {
+        return {
+          status: 200,
+          data: { id: "wfd_digest", status: "stopped" },
+          cookies: [],
+        };
       }
       if (
         method === "GET" &&
@@ -1296,7 +1448,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmail: "alice@example.com",
       userEmailVerified: true,
       seedModel: MODEL,
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log: collector().log,
     });
@@ -1327,6 +1478,13 @@ describe("provisionPersonalTenantIfNeeded", () => {
     const startedRuns: Record<string, string[]> = {};
 
     const api: ApiCall = async (method, path, body) => {
+      const registry = corbitsToolsRegistryResponse(
+        method,
+        path,
+        TENANT_ID,
+        "missing",
+      );
+      if (registry !== undefined) return registry;
       if (method === "GET" && path === "/api/me/principals") {
         return {
           status: 200,
@@ -1438,27 +1596,36 @@ describe("provisionPersonalTenantIfNeeded", () => {
       if (method === "POST" && path === `/api/tenants/${TENANT_ID}/skills`) {
         return { status: 201, data: {}, cookies: [] };
       }
-      if (method === "GET" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        return { status: 200, data: { items: [] }, cookies: [] };
-      }
-      if (method === "POST" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        const routineBody = body as {
-          name: string;
-          presetKey: string;
-          deliveryWorkbenchId?: string;
-        };
+      if (
+        method === "GET" &&
+        path.startsWith(`/api/tenants/${TENANT_ID}/workflows/definitions`)
+      ) {
         return {
-          status: 201,
+          status: 200,
           data: {
-            id: `rtn_${routineBody.presetKey}`,
-            tenantId: TENANT_ID,
-            name: routineBody.name,
-            enabled: false,
-            deliveryWorkbenchId: routineBody.deliveryWorkbenchId ?? null,
-            presetKey: routineBody.presetKey,
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
+            data: [
+              {
+                id: "wfd_digest",
+                tenantId: TENANT_ID,
+                name: "workbench-digest",
+                currentVersion: "1",
+                status: "deployed",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+            nextCursor: null,
           },
+          cookies: [],
+        };
+      }
+      if (
+        method === "PUT" &&
+        path === `/api/tenants/${TENANT_ID}/agent-definitions/wfd_digest/status`
+      ) {
+        return {
+          status: 200,
+          data: { id: "wfd_digest", status: "stopped" },
           cookies: [],
         };
       }
@@ -1543,7 +1710,6 @@ describe("provisionPersonalTenantIfNeeded", () => {
       userEmail: "alice@example.com",
       userEmailVerified: true,
       seedModel: MODEL,
-      publishToolRegistry: noopPublishToolRegistry,
       pushWorkflow: noopPush,
       log: collector().log,
     });
@@ -1560,5 +1726,212 @@ describe("provisionPersonalTenantIfNeeded", () => {
     const status = await seededWorkflowStatus(api, ["session=abc"], TENANT_ID);
     expect(status.deployed).toContain(SETUP_AGENT_ASSET_NAME);
     expect(status.pending).not.toContain(SETUP_AGENT_ASSET_NAME);
+  });
+
+  test("isFullySeeded is false when corbits-tools exists but has no tarballs", async () => {
+    const api: ApiCall = async (method, path) => {
+      const registry = corbitsToolsRegistryResponse(
+        method,
+        path,
+        TENANT_ID,
+        [],
+      );
+      if (registry !== undefined) return registry;
+      if (
+        method === "GET" &&
+        path ===
+          `/api/tenants/${TENANT_ID}/assets?kind=workflow&inherited=false`
+      ) {
+        return {
+          status: 200,
+          data: DEFAULT_WORKFLOWS.map((workflow, index) => ({
+            id: `ast_${index}`,
+            tenantId: TENANT_ID,
+            kind: "workflow",
+            name: workflow.assetName,
+            displayName: workflow.displayName,
+            creatorPrincipalId: PRINCIPAL_ID,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            origin: { tenantId: TENANT_ID, direct: true },
+          })),
+          cookies: [],
+        };
+      }
+      if (
+        method === "GET" &&
+        path === `/api/tenants/${TENANT_ID}/workflows/deployments`
+      ) {
+        return {
+          status: 200,
+          data: DEFAULT_WORKFLOWS.map((_workflow, index) => ({
+            definitionAssetId: `ast_${index}`,
+            status: "deployed",
+          })),
+          cookies: [],
+        };
+      }
+      throw new Error(`unexpected call: ${method} ${path}`);
+    };
+
+    expect(await isFullySeeded(api, ["session=abc"], TENANT_ID)).toBe(false);
+  });
+
+  test("isFullySeeded is true when workflows are live and corbits-tools carries memory-tools", async () => {
+    const api: ApiCall = async (method, path) => {
+      const registry = corbitsToolsRegistryResponse(method, path, TENANT_ID, [
+        SEEDED_MEMORY_TARBALL,
+      ]);
+      if (registry !== undefined) return registry;
+      if (
+        method === "GET" &&
+        path ===
+          `/api/tenants/${TENANT_ID}/assets?kind=workflow&inherited=false`
+      ) {
+        return {
+          status: 200,
+          data: DEFAULT_WORKFLOWS.map((workflow, index) => ({
+            id: `ast_${index}`,
+            tenantId: TENANT_ID,
+            kind: "workflow",
+            name: workflow.assetName,
+            displayName: workflow.displayName,
+            creatorPrincipalId: PRINCIPAL_ID,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            origin: { tenantId: TENANT_ID, direct: true },
+          })),
+          cookies: [],
+        };
+      }
+      if (
+        method === "GET" &&
+        path === `/api/tenants/${TENANT_ID}/workflows/deployments`
+      ) {
+        return {
+          status: 200,
+          data: DEFAULT_WORKFLOWS.map((_workflow, index) => ({
+            definitionAssetId: `ast_${index}`,
+            status: "deployed",
+          })),
+          cookies: [],
+        };
+      }
+      throw new Error(`unexpected call: ${method} ${path}`);
+    };
+
+    expect(await isFullySeeded(api, ["session=abc"], TENANT_ID)).toBe(true);
+  });
+
+  test("sign-in does not republish an empty inherited corbits-tools registry", async () => {
+    const api: ApiCall = async (method, path) => {
+      const registry = corbitsToolsRegistryResponse(
+        method,
+        path,
+        TENANT_ID,
+        [],
+      );
+      if (registry !== undefined) return registry;
+      if (method === "GET" && path === "/api/me/principals") {
+        return {
+          status: 200,
+          data: {
+            data: [
+              {
+                principalId: PRINCIPAL_ID,
+                tenantId: TENANT_ID,
+                tenantName: "alice's workbench",
+                tenantSlug: TENANT_SLUG,
+                kind: "user",
+                status: "active",
+                roles: [{ id: "rol_owner", name: "owner" }],
+              },
+            ],
+            nextCursor: null,
+          },
+          cookies: [],
+        };
+      }
+      if (
+        method === "GET" &&
+        path.startsWith(`/api/tenants/${TENANT_ID}/grants?`)
+      ) {
+        return {
+          status: 200,
+          data: { data: [], nextCursor: null },
+          cookies: [],
+        };
+      }
+      if (method === "POST" && path === `/api/tenants/${TENANT_ID}/grants`) {
+        return { status: 201, data: {}, cookies: [] };
+      }
+      if (method === "GET" && path === `/api/tenants/${TENANT_ID}`) {
+        return {
+          status: 200,
+          data: {
+            id: TENANT_ID,
+            name: "alice's workbench",
+            slug: TENANT_SLUG,
+            domain: `${TENANT_SLUG}.localhost`,
+            parentId: "ten_operator",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+          cookies: [],
+        };
+      }
+      if (
+        method === "GET" &&
+        path ===
+          `/api/tenants/${TENANT_ID}/assets?kind=workflow&inherited=false`
+      ) {
+        return {
+          status: 200,
+          data: DEFAULT_WORKFLOWS.map((workflow, index) => ({
+            id: `ast_${index}`,
+            tenantId: TENANT_ID,
+            kind: "workflow",
+            name: workflow.assetName,
+            displayName: workflow.displayName,
+            creatorPrincipalId: PRINCIPAL_ID,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            origin: { tenantId: TENANT_ID, direct: true },
+          })),
+          cookies: [],
+        };
+      }
+      if (
+        method === "GET" &&
+        path === `/api/tenants/${TENANT_ID}/workflows/deployments`
+      ) {
+        return {
+          status: 200,
+          data: DEFAULT_WORKFLOWS.map((_workflow, index) => ({
+            definitionAssetId: `ast_${index}`,
+            status: "deployed",
+          })),
+          cookies: [],
+        };
+      }
+      throw new Error(`unexpected call: ${method} ${path}`);
+    };
+
+    const result = await provisionPersonalTenantIfNeeded({
+      api,
+      cookies: ["session=abc"],
+      hubUrl: "http://localhost:3000",
+      userId: "user_1",
+      userEmail: "alice@example.com",
+      userEmailVerified: true,
+      pushWorkflow: noopPush,
+      log: collector().log,
+    });
+
+    expect(result).toEqual({
+      kind: "existing-member",
+      seeded: false,
+      tenantId: TENANT_ID,
+    });
   });
 });

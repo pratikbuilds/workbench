@@ -5,6 +5,7 @@
 // invariant that the sidebar mounts on every render of AppShell.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -55,6 +56,21 @@ describe("StageTopBar", () => {
     );
     expect(markup).not.toContain('aria-label="Toggle sidebar"');
     expect(markup).not.toContain('aria-label="Collapse sidebar"');
+  });
+
+  test("an interactive subtitle is not clipped by overflow hidden", () => {
+    const css = readFileSync(
+      new URL("../src/app.css", import.meta.url),
+      "utf8",
+    );
+    const interactive = css
+      .split("}")
+      .find((candidate) =>
+        candidate.includes(".stage-top-bar-sub:has(button)"),
+      );
+    expect(interactive).toBeDefined();
+    expect(interactive).toContain("overflow: visible");
+    expect(interactive).toContain("flex-shrink: 0");
   });
 });
 

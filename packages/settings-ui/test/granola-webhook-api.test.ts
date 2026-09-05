@@ -1,16 +1,14 @@
-// The Granola webhook card's seam to `@corbits/webhook-triggers`' and
-// `@corbits/routines`' HTTP routes — mirrors `apps/web/src/routines-api.ts`
-// and `apps/web/src/webhook-triggers-api.ts`'s conventions (tenant-scoped
-// requests, arktype at the boundary) without depending on either app-side
-// module, since `packages/settings-ui` never imports from `apps/*`.
+// The Granola webhook card's seam to `@corbits/webhook-triggers`' HTTP
+// routes — mirrors `apps/web/src/webhook-triggers-api.ts`'s conventions
+// (tenant-scoped requests, arktype at the boundary) without depending on
+// an app-side module, since `packages/settings-ui` never imports from
+// `apps/*`.
 
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
-  bindRoutineWebhookTrigger,
   createGranolaWebhookTrigger,
   GranolaWebhookApiError,
-  listGranolaRoutines,
   listGranolaWebhookTriggers,
   listGranolaWorkflowDefinitions,
   rotateGranolaWebhookTriggerSecret,
@@ -160,38 +158,6 @@ describe("rotateGranolaWebhookTriggerSecret", () => {
   });
 });
 
-describe("listGranolaRoutines", () => {
-  test("requests the tenant's routines and keeps only id, name, definitionId, trigger", async () => {
-    globalThis.fetch = (async () =>
-      jsonResponse(200, {
-        items: [
-          {
-            id: "rt_1",
-            name: "Granola calls",
-            definitionId: "def_1",
-            trigger: { kind: "webhook", webhookTriggerId: "wht_1" },
-            scope: "bench",
-            input: {},
-            enabled: true,
-            deliveryWorkbenchId: null,
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-      })) as unknown as typeof fetch;
-
-    const routines = await listGranolaRoutines("ten_1");
-    expect(routines).toMatchObject([
-      {
-        id: "rt_1",
-        name: "Granola calls",
-        definitionId: "def_1",
-        trigger: { kind: "webhook", webhookTriggerId: "wht_1" },
-      },
-    ]);
-  });
-});
-
 describe("listGranolaWorkflowDefinitions", () => {
   test("returns id/name pairs from the workflow-definitions listing", async () => {
     let requestedPath = "";
@@ -206,42 +172,6 @@ describe("listGranolaWorkflowDefinitions", () => {
     const definitions = await listGranolaWorkflowDefinitions("ten_1");
     expect(requestedPath).toContain("/api/tenants/ten_1/workflows/definitions");
     expect(definitions).toEqual([{ id: "def_1", name: "granola-call" }]);
-  });
-});
-
-describe("bindRoutineWebhookTrigger", () => {
-  test("PATCHes the routine's trigger to the webhook binding", async () => {
-    let requestedPath = "";
-    let method = "";
-    let requestedBody: unknown;
-    globalThis.fetch = (async (
-      input: RequestInfo | URL,
-      init?: RequestInit,
-    ) => {
-      requestedPath = String(input);
-      method = init?.method ?? "";
-      requestedBody =
-        init?.body !== undefined ? JSON.parse(String(init.body)) : undefined;
-      return jsonResponse(200, {
-        id: "rt_1",
-        name: "Granola calls",
-        definitionId: "def_1",
-        trigger: { kind: "webhook", webhookTriggerId: "wht_2" },
-        scope: "bench",
-        input: {},
-        enabled: true,
-        deliveryWorkbenchId: null,
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      });
-    }) as unknown as typeof fetch;
-
-    await bindRoutineWebhookTrigger("ten_1", "rt_1", "wht_2");
-    expect(requestedPath).toBe("/api/tenants/ten_1/routines/rt_1");
-    expect(method).toBe("PATCH");
-    expect(requestedBody).toEqual({
-      trigger: { kind: "webhook", webhookTriggerId: "wht_2" },
-    });
   });
 });
 

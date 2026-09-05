@@ -9,7 +9,7 @@ import type {
   RepoId,
   RepoStore,
 } from "@intx/hub-sessions/substrate";
-import type { ConversationTurn } from "@intx/types/runtime";
+import type { ConversationTurn, PendingOperation } from "@intx/types/runtime";
 
 import {
   createDurableConversationStore,
@@ -167,6 +167,60 @@ test("two rooms of one agent keep isolated turns; a new room starts empty", asyn
   expect(peekTurns(store)).toEqual([userTurn("room B first infer")]);
 
   expect(await store.bindOriginatingWorkbench("chan_b")).toBe(false);
+});
+
+const EMPTY_TOKEN_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  thinking: 0,
+};
+
+test("a retired signal-kind pending op is dropped on restore, not thrown on", async () => {
+  const root = tmpDir("conv-retired-kind-");
+  const agentStateDir = path.join(root, "agent-state", "default", "chan_a");
+  await fs.promises.mkdir(agentStateDir, { recursive: true });
+
+  const survivingOp: PendingOperation = {
+    correlationId: "corr-approval",
+    kind: "approval",
+    registeredAt: 0,
+    gateId: "gate-approval",
+  };
+  const retiredOp = {
+    correlationId: "corr-retired",
+    kind: "message_response",
+    registeredAt: 0,
+    gateId: "gate-retired",
+  };
+
+  await fs.promises.writeFile(
+    path.join(agentStateDir, "checkpoint.json"),
+    JSON.stringify({
+      turns: [],
+      pendingOperations: [survivingOp, retiredOp],
+      tokenUsage: EMPTY_TOKEN_USAGE,
+      connectorState: null,
+    }),
+  );
+  await fs.promises.writeFile(
+    path.join(agentStateDir, "checkpoint.meta.json"),
+    JSON.stringify({
+      checkpointSeq: 0,
+      turnCount: 0,
+      pendingOperations: [survivingOp, retiredOp],
+      tokenUsage: EMPTY_TOKEN_USAGE,
+      connectorState: null,
+    }),
+  );
+
+  const reconstructed = await reconstructDurableConversation(
+    agentStateDir,
+    "default/chan_a",
+  );
+
+  expect(reconstructed?.pendingOperations).toEqual([survivingOp]);
 });
 
 test("two queued mails bind and mirror under each message's From not a later origin", async () => {

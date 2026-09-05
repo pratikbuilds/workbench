@@ -1,15 +1,14 @@
-// Pure merge over the four event kinds a per-workbench Timeline draws from
-// (chat messages, thread forks, routine runs, approvals) — one wall-clock
-// spine, oldest first, with day dividers and KPI rollups derived from the
-// same merged array. No new backend: every input here is already fetched by
-// an existing page (chat-ui, routines-api, api.ts).
+// Pure merge over the event kinds a per-workbench Timeline draws from
+// (chat messages, thread forks, approvals) — one wall-clock spine, oldest
+// first, with day dividers and KPI rollups derived from the same merged
+// array. No new backend: every input here is already fetched by an
+// existing page (chat-ui, api.ts).
 
 import { isAgentAddress } from "@corbits/chat/mentions";
 import { localPartOf } from "@corbits/chat/agent-address";
 import type { WorkbenchThread, MessageItem } from "@corbits/chat-ui";
 
 import type { PendingApproval } from "./pending-approvals";
-import type { Routine, RoutineRun } from "./routines-api";
 
 export type TimelineMessageEvent = {
   readonly kind: "message";
@@ -29,16 +28,6 @@ export type TimelineThreadForkEvent = {
   readonly parentMessageId: string | null;
 };
 
-export type TimelineRoutineRunEvent = {
-  readonly kind: "routine-run";
-  readonly id: string;
-  readonly at: string;
-  readonly routineName: string;
-  readonly runId: string;
-  readonly status: "ok" | "failed" | "running";
-  readonly durationMs: number | null;
-};
-
 export type TimelineApprovalEvent = {
   readonly kind: "approval";
   readonly id: string;
@@ -48,10 +37,7 @@ export type TimelineApprovalEvent = {
 };
 
 export type TimelineEvent =
-  | TimelineMessageEvent
-  | TimelineThreadForkEvent
-  | TimelineRoutineRunEvent
-  | TimelineApprovalEvent;
+  TimelineMessageEvent | TimelineThreadForkEvent | TimelineApprovalEvent;
 
 const EXCERPT_LIMIT = 120;
 
@@ -103,67 +89,6 @@ export function toThreadForkEvents(
     }));
 }
 
-/** This workbench's own routines — the ones that deliver into it, not
- * every routine the owning bench has defined. */
-export function routinesForWorkbench(
-  routines: readonly Routine[],
-  workbenchId: string,
-): readonly Routine[] {
-  return routines.filter(
-    (routine) => routine.deliveryWorkbenchId === workbenchId,
-  );
-}
-
-function embeddedRunField(run: RoutineRun, key: string): unknown {
-  return run.run?.[key];
-}
-
-export function routineRunStatus(run: RoutineRun): "ok" | "failed" | "running" {
-  if (run.error !== undefined && run.error !== null) return "failed";
-  const status = embeddedRunField(run, "status");
-  if (status === "running") return "running";
-  if (status === "failed" || status === "error") return "failed";
-  return "ok";
-}
-
-/**
- * Best-effort elapsed time from the run's own embedded record — `null`
- * (never a fabricated duration) when the record carries no `endedAt`, e.g.
- * a still-running or synthetic schedule-failed row.
- */
-export function routineRunDurationMs(run: RoutineRun): number | null {
-  const endedRaw = embeddedRunField(run, "endedAt");
-  if (typeof endedRaw !== "string") return null;
-  const startedRaw = embeddedRunField(run, "createdAt");
-  const startIso = typeof startedRaw === "string" ? startedRaw : run.createdAt;
-  const startMs = Date.parse(startIso);
-  const endMs = Date.parse(endedRaw);
-  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return null;
-  return Math.max(0, endMs - startMs);
-}
-
-export function toRoutineRunEvents(
-  routines: readonly Routine[],
-  runsByRoutineId: ReadonlyMap<string, readonly RoutineRun[]>,
-): readonly TimelineRoutineRunEvent[] {
-  const events: TimelineRoutineRunEvent[] = [];
-  for (const routine of routines) {
-    const runs = runsByRoutineId.get(routine.id) ?? [];
-    for (const run of runs) {
-      events.push({
-        kind: "routine-run",
-        id: run.runId,
-        at: run.createdAt,
-        routineName: routine.name,
-        runId: run.runId,
-        status: routineRunStatus(run),
-        durationMs: routineRunDurationMs(run),
-      });
-    }
-  }
-  return events;
-}
-
 /**
  * An approval carries no workbench id (a known v1 gap — see
  * workbench-timeline.tsx), so every pending approval for the owning bench
@@ -184,7 +109,6 @@ export function toApprovalEvents(
 export type TimelineEventGroups = {
   readonly messages: readonly TimelineMessageEvent[];
   readonly threadForks: readonly TimelineThreadForkEvent[];
-  readonly routineRuns: readonly TimelineRoutineRunEvent[];
   readonly approvals: readonly TimelineApprovalEvent[];
 };
 
@@ -196,7 +120,6 @@ export function mergeTimelineEvents(
   const all: TimelineEvent[] = [
     ...groups.messages,
     ...groups.threadForks,
-    ...groups.routineRuns,
     ...groups.approvals,
   ];
   return all
@@ -260,7 +183,6 @@ export type TimelineDayKpi = {
   readonly label: string;
   readonly messages: number;
   readonly agentTurns: number;
-  readonly routineRuns: number;
   readonly approvals: number;
 };
 
@@ -272,16 +194,12 @@ export function computeTimelineDayKpis(
   return groupTimelineByDay(events).map((group) => {
     let messages = 0;
     let agentTurns = 0;
-    let routineRuns = 0;
     let approvals = 0;
     for (const event of group.events) {
       switch (event.kind) {
         case "message":
           messages += 1;
           if (event.isAgent) agentTurns += 1;
-          break;
-        case "routine-run":
-          routineRuns += 1;
           break;
         case "approval":
           approvals += 1;
@@ -295,13 +213,12 @@ export function computeTimelineDayKpis(
       label: group.label,
       messages,
       agentTurns,
-      routineRuns,
       approvals,
     };
   });
 }
 
-export type TimelineFilter = "all" | "messages" | "runs" | "approvals";
+export type TimelineFilter = "all" | "messages" | "approvals";
 
 export function filterTimelineEvents(
   events: readonly TimelineEvent[],
@@ -314,8 +231,6 @@ export function filterTimelineEvents(
       return events.filter(
         (event) => event.kind === "message" || event.kind === "thread-fork",
       );
-    case "runs":
-      return events.filter((event) => event.kind === "routine-run");
     case "approvals":
       return events.filter((event) => event.kind === "approval");
   }

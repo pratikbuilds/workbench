@@ -266,6 +266,101 @@ describe("POST /participants/messages", () => {
     ).toBe(true);
   });
 
+  test("re-posting a question block with the same questionId returns the existing card and does not insert a second message", async () => {
+    const store = createInMemoryChatStore();
+    await store.createWorkbenchSettings({
+      tenantId: TENANT.id,
+      workbenchId: "chan_1",
+      settings: {
+        "chat/kind": "workbench",
+        "chat/participants": [{ address: RUN_ADDRESS, handle: "myra" }],
+      },
+      updatedBy: "prn_1",
+    });
+    const roomMessages = createInMemoryRoomMessageStore();
+    const app = buildApp({ store, roomMessages });
+    const questionBlock = {
+      kind: "block" as const,
+      block: {
+        type: "question",
+        data: {
+          questionId: "q_retry1",
+          question: "Which environment?",
+          options: ["Staging", "Production"],
+        },
+      },
+    };
+    const post = () =>
+      app.request("/participants/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...AUTH_HEADERS },
+        body: JSON.stringify({ parts: [questionBlock] }),
+      });
+
+    const first = await post();
+    expect(first.status).toBe(201);
+    const firstBody = (await first.json()) as { id: string; createdAt: string };
+
+    const second = await post();
+    expect(second.ok).toBe(true);
+    const secondBody = (await second.json()) as {
+      id: string;
+      createdAt: string;
+    };
+    expect(secondBody.id).toBe(firstBody.id);
+    expect(secondBody.createdAt).toBe(firstBody.createdAt);
+
+    const listed = await roomMessages.listMessages({
+      tenantId: TENANT.id,
+      workbenchId: "chan_1",
+    });
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]?.id).toBe(firstBody.id);
+  });
+
+  test("a different questionId still posts a second card", async () => {
+    const store = createInMemoryChatStore();
+    await store.createWorkbenchSettings({
+      tenantId: TENANT.id,
+      workbenchId: "chan_1",
+      settings: {
+        "chat/kind": "workbench",
+        "chat/participants": [{ address: RUN_ADDRESS, handle: "myra" }],
+      },
+      updatedBy: "prn_1",
+    });
+    const roomMessages = createInMemoryRoomMessageStore();
+    const app = buildApp({ store, roomMessages });
+    const post = (questionId: string) =>
+      app.request("/participants/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...AUTH_HEADERS },
+        body: JSON.stringify({
+          parts: [
+            {
+              kind: "block",
+              block: {
+                type: "question",
+                data: {
+                  questionId,
+                  question: "Which environment?",
+                  options: ["Staging", "Production"],
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+    expect((await post("q_one")).status).toBe(201);
+    expect((await post("q_two")).status).toBe(201);
+    const listed = await roomMessages.listMessages({
+      tenantId: TENANT.id,
+      workbenchId: "chan_1",
+    });
+    expect(listed.items).toHaveLength(2);
+  });
+
   test("posting a connect-service block records the pending connection on the workbench and publishes chat.settings", async () => {
     const store = createInMemoryChatStore();
     await store.createWorkbenchSettings({

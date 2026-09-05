@@ -32,6 +32,11 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { formatUsd } from "@corbits/insights/client";
 import { CHAT_STRINGS, type Workbench } from "@corbits/chat-ui";
+import {
+  runOutcomeStatus,
+  runStatusLabel,
+  withListingAbandoned,
+} from "@corbits/workflows/client";
 
 import { approveApproval, rejectApproval, useAPIQuery } from "../api";
 import { useBench } from "../bench-context";
@@ -63,13 +68,33 @@ type InFlightRow = {
   readonly steps: string;
 };
 
-function routineInFlightRow(routine: RoutineActivityItem): InFlightRow {
+function listingFromRoutine(routine: RoutineActivityItem, now: number) {
+  return withListingAbandoned(
+    {
+      createdAt: routine.startedAt,
+      status: routine.status,
+      ...(routine.endedAt !== undefined ? { endedAt: routine.endedAt } : {}),
+      ...(routine.hasInFlightTurn !== undefined
+        ? { hasInFlightTurn: routine.hasInFlightTurn }
+        : {}),
+      ...(routine.turns !== undefined ? { turns: routine.turns } : {}),
+    },
+    now,
+  );
+}
+
+function routineInFlightRow(
+  routine: RoutineActivityItem,
+  now: number,
+): InFlightRow {
+  const status =
+    runOutcomeStatus(listingFromRoutine(routine, now), now) ?? routine.status;
   return {
     key: `routine:${routine.id}`,
     label: routine.name,
     context: "routine",
     createdAt: routine.startedAt,
-    statusLabel: "Running",
+    statusLabel: runStatusLabel(status),
     statusTone: RUN_STATUS_TONE.running,
     // The routine feed carries no step count — an honest dash, not a guess.
     steps: "—",
@@ -79,10 +104,14 @@ function routineInFlightRow(routine: RoutineActivityItem): InFlightRow {
 /** Every routine this bench is actively running right now, newest first. */
 export function computeInFlightRows(
   routines: readonly RoutineActivityItem[],
+  now: number = Date.now(),
 ): readonly InFlightRow[] {
   const rows = routines
-    .filter((routine) => routine.status === "running")
-    .map(routineInFlightRow);
+    .filter(
+      (routine) =>
+        runOutcomeStatus(listingFromRoutine(routine, now), now) === "running",
+    )
+    .map((routine) => routineInFlightRow(routine, now));
   return rows.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
 
@@ -227,10 +256,7 @@ export function MissionControlRoute({
   const inFlightRows =
     activity.kind === "ready" ? computeInFlightRows(activity.routines) : [];
   const activeRunsCount =
-    activity.kind === "ready"
-      ? activity.routines.filter((routine) => routine.status === "running")
-          .length
-      : null;
+    activity.kind === "ready" ? inFlightRows.length : null;
 
   const jumpBackRows =
     activity.kind === "ready"

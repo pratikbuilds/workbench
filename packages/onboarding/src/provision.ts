@@ -18,9 +18,8 @@ import {
   DEFAULT_WORKFLOWS,
   reconcileSeedGrants,
   seedTenant,
-  publishCorbitsToolsRegistry,
+  isCorbitsToolsRegistrySeeded,
   type ModelSource,
-  type ToolRegistryPublisher,
   type WorkflowPusher,
   isLiveDeploymentStatus,
 } from "@corbits/seeding";
@@ -106,7 +105,6 @@ export type ProvisionArgs = {
   displayName?: string;
   operatorTenantId?: string;
   seedModel?: ModelSource;
-  publishToolRegistry?: ToolRegistryPublisher;
   pushWorkflow: WorkflowPusher;
   log: (line: string) => void;
   /** The closed-by-default access-policy gate. Absent means this hub
@@ -213,10 +211,11 @@ async function seededWorkflowNames(
 
 /**
  * Whether every default workflow already has an active deployment on
- * this tenant. Read-only: it never creates or deploys anything, it
- * only tells the caller whether `seedTenant` still has work to do —
- * the same asset-then-deployment lookup `seedTenant` itself performs
- * before deciding to skip a step.
+ * this tenant AND the `corbits-tools` registry exists with the seeded
+ * tool-package tarballs (at least `@corbits/memory-tools`). Read-only:
+ * it never creates or deploys anything. A dangling empty registry row
+ * is not fully seeded — assistant-deployed-but-unpublishable is the
+ * first-launch failure this check exists to catch.
  */
 export async function isFullySeeded(
   api: ApiCall,
@@ -224,34 +223,8 @@ export async function isFullySeeded(
   tenantId: string,
 ): Promise<boolean> {
   const { pending } = await seededWorkflowNames(api, cookies, tenantId);
-  return pending.length === 0;
-}
-
-async function publishRootToolRegistry(args: {
-  api: ApiCall;
-  cookies: string[];
-  hubUrl: string;
-  tenantId: string;
-  publishToolRegistry?: ToolRegistryPublisher;
-  log: (line: string) => void;
-}): Promise<void> {
-  const publishToolRegistry =
-    args.publishToolRegistry ?? publishCorbitsToolsRegistry;
-  try {
-    await publishToolRegistry({
-      api: args.api,
-      cookies: args.cookies,
-      hubUrl: args.hubUrl,
-      tenantId: args.tenantId,
-      log: args.log,
-    });
-  } catch (cause) {
-    throw new ProvisionError(
-      "tool_registry_publish_failed",
-      `personal root bench ${args.tenantId} could not publish corbits-tools before seeding: ${cause instanceof Error ? cause.message : String(cause)}`,
-      "transient",
-    );
-  }
+  if (pending.length > 0) return false;
+  return isCorbitsToolsRegistrySeeded(api, cookies, tenantId);
 }
 
 /**
@@ -330,19 +303,6 @@ export async function provisionPersonalTenantIfNeeded(
       tenantResponse.data,
       "tenant response",
     );
-    if (ownTenant.parentId === undefined || ownTenant.parentId === null) {
-      await publishRootToolRegistry({
-        api: args.api,
-        cookies: args.cookies,
-        hubUrl: args.hubUrl,
-        tenantId: own.tenantId,
-        ...(args.publishToolRegistry !== undefined
-          ? { publishToolRegistry: args.publishToolRegistry }
-          : {}),
-        log: args.log,
-      });
-    }
-
     const fullySeeded = await isFullySeeded(
       args.api,
       args.cookies,
@@ -478,19 +438,6 @@ export async function provisionPersonalTenantIfNeeded(
       `personal bench ${tenant.id} was created but the caller has no principal in it`,
       "transient",
     );
-  }
-
-  if (tenant.parentId === undefined || tenant.parentId === null) {
-    await publishRootToolRegistry({
-      api: args.api,
-      cookies: args.cookies,
-      hubUrl: args.hubUrl,
-      tenantId: tenant.id,
-      ...(args.publishToolRegistry !== undefined
-        ? { publishToolRegistry: args.publishToolRegistry }
-        : {}),
-      log: args.log,
-    });
   }
 
   if (!args.seedModel) {

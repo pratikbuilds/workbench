@@ -1,30 +1,23 @@
 // The `ask_user` tool: poses an interview question in-thread as an
 // interactive `question` block (`@corbits/chat`'s `blocks.ts`) instead of
-// prose bullet options, then structurally parks the turn on a
-// `message_response` gate — the reactor neither runs nor answers the call
-// until a correlated reply arrives. The answer surfaces as the responding
-// user's own next message in this same channel
-// (`packages/chat/src/routes.ts`'s question response handling relays it
-// there), which clears the gate and becomes the call's tool result. No
-// synchronous guess: the turn cannot proceed until it does.
+// prose bullet options, then ends the turn. A Workbench agent is an
+// unbounded interactive step — every inbound mail is its next turn — so
+// "ask a person" is native as "post the question and stop," not a
+// structural park: the person's answer, posted as an ordinary reply in the
+// same channel (`packages/chat/src/routes.ts`'s block-response route,
+// which sends it as a plain message), arrives as the next turn's own
+// inbound message, not as this call's result.
 import { defineTool } from "@intx/agent";
 import type { BaseEnv } from "@intx/agent";
-import type {
-  BeforeToolDecision,
-  PendingOperation,
-  ToolCall,
-  ToolResult,
-} from "@intx/types/runtime";
+import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
 
-import { postQuestion, NoOwnChannelError } from "./client";
+import { reportError } from "@corbits/error-sink";
+
+import { postQuestion, questionIdForCall } from "./client";
 import type { AskUserClientConfig } from "./client";
 
 export const ASK_USER_TOOL = "ask_user";
-
-/** How long a posted question waits for an answer before the gate times out
- * and the parked call is answered with a synthetic error. */
-export const ASK_USER_TIMEOUT_MS = 3_600_000;
 
 export interface AskUserEnv extends BaseEnv {
   readonly hubChatUrl: string;
@@ -57,64 +50,49 @@ function clientConfig(env: AskUserEnv): AskUserClientConfig {
 }
 
 /**
- * `ask_user`'s `BeforeToolExtension.beforeTool`: posts the question card,
- * then parks the call on a `message_response` gate rather than answering it.
- * The reactor registers the gate and durably persists `pendingOp` before
- * returning to its loop, so the suspension survives a hub restart; it clears
- * only when a correlated reply arrives (or the gate times out).
+ * `ask_user`'s `run`: posts the question card, then answers the call with a
+ * short instruction telling the model to end its turn — the person's answer
+ * is not this call's result, it is the next turn's inbound message. No gate,
+ * no correlation id, no park: a Workbench agent's next mail is already its
+ * next turn, so posting and stopping IS "asking a person" here.
+ *
+ * `postQuestion` stamps `questionIdForCall(call.id)` (derived from the
+ * tool-call id, not minted per attempt) on the outbound question card, so a
+ * crash-retry of the same call re-posts the same id and the write path
+ * returns the existing card rather than a duplicate (CL-7248).
  */
-async function beforeAskUser(
+async function runAskUser(
   env: AskUserEnv,
   call: ToolCall,
-): Promise<BeforeToolDecision> {
-  if (call.name !== ASK_USER_TOOL) {
-    return { type: "allow" };
-  }
-
+): Promise<ToolResult> {
   const parsed = AskUserInput(call.arguments);
   if (parsed instanceof type.errors) {
-    return {
-      type: "block",
-      reason: `${ASK_USER_TOOL} received invalid input: ${parsed.summary}`,
-    };
+    return errorResult(
+      call.id,
+      new Error(`${ASK_USER_TOOL} received invalid input: ${parsed.summary}`),
+    );
   }
 
-  let questionId: string;
   try {
-    ({ questionId } = await postQuestion(clientConfig(env), parsed));
+    await postQuestion(clientConfig(env), {
+      ...parsed,
+      questionId: questionIdForCall(call.id),
+    });
   } catch (err) {
-    if (err instanceof NoOwnChannelError) {
-      return { type: "block", reason: err.message };
-    }
-    return {
-      type: "block",
-      reason: err instanceof Error ? err.message : String(err),
-    };
+    reportError(err, {
+      operation: "ask_user_post_question",
+      agentId: env.address,
+    });
+    return errorResult(call.id, err);
   }
-
-  // `postQuestion` already mints `questionId` and stamps it on the outbound
-  // question card's `data.questionId`; reusing it as the gate's own
-  // `correlationId` (rather than minting a second, unrelated id) is what
-  // lets the answer route resolve this exact gate later (CL-7191) — the
-  // block a person answers is keyed on `blockId`, which for a question
-  // block IS `questionId` (`packages/chat/src/schema.ts`'s "agent-authored
-  // pollId/formId" comment applies identically here).
-  const correlationId = questionId;
-  const timeoutAt = Date.now() + ASK_USER_TIMEOUT_MS;
-  const gateId = `pending-${correlationId}`;
-  const pendingOp: PendingOperation = {
-    correlationId,
-    kind: "message_response",
-    registeredAt: Date.now(),
-    gateId,
-    timeoutAt,
-    suspendedCall: call,
-  };
 
   return {
-    type: "suspend",
-    gate: { type: "message_response", gateId, correlationId, timeoutAt },
-    pendingOp,
+    callId: call.id,
+    isError: false,
+    content:
+      "Question posted to the user. Do not wait for a reply here or call " +
+      "another tool for it: end this turn now. The user's answer will " +
+      "arrive as your next inbound message, not as this call's result.",
   };
 }
 
@@ -122,8 +100,8 @@ async function beforeAskUser(
  * The `@corbits/interaction-tools` bundle factory: one tool, `ask_user`,
  * for posing an enumerable-option interview question as an in-thread card
  * instead of a prose list. No approval gate — showing a question is not an
- * external side effect — but its own `message_response` gate parks the turn
- * until the user answers.
+ * external side effect — and no `message_response` gate either: the call
+ * posts and returns immediately, ending the turn.
  */
 export const interactionTools = defineTool<AskUserEnv>({
   id: "@corbits/interaction-tools/ask-user",
@@ -138,9 +116,9 @@ export const interactionTools = defineTool<AskUserEnv>({
           "options, rendered as an interactive card in the conversation " +
           "instead of a prose list. Use this whenever interviewing the " +
           "user with a small set of enumerable options (2-6), rather " +
-          "than writing the options out as text. Parks the turn until " +
-          "the user answers: the answer becomes this call's result, not " +
-          "a separate message to watch for.",
+          "than writing the options out as text. Ends your turn once " +
+          "posted: the user's answer arrives as your next message, not " +
+          "as this call's result.",
         inputSchema: {
           type: "object",
           properties: {
@@ -170,26 +148,9 @@ export const interactionTools = defineTool<AskUserEnv>({
         },
       },
     ],
-    beforeToolExtension: {
-      beforeTool: (call: ToolCall) => beforeAskUser(env, call),
-    },
     run: (call: ToolCall, _signal: AbortSignal) => {
-      // `beforeToolExtension` above intercepts every ask_user call and parks
-      // it before dispatch ever reaches here; reaching this arm means
-      // `interactionTools`'s `beforeToolExtension` was never composed into
-      // `ResolvedTools.beforeToolExtensions` (`vendor/intx/agent/src/agent.ts`)
-      // — a re-pin or refactor dropped that wiring — not merely "unreachable".
       if (call.name === ASK_USER_TOOL) {
-        return Promise.resolve(
-          errorResult(
-            call.id,
-            new Error(
-              `${ASK_USER_TOOL}'s beforeToolExtension was not composed ` +
-                "into ResolvedTools.beforeToolExtensions — a re-pin or " +
-                "refactor dropped the wiring in vendor/intx/agent/src/agent.ts",
-            ),
-          ),
-        );
+        return runAskUser(env, call);
       }
       return Promise.resolve(
         errorResult(

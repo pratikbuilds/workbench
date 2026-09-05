@@ -1,6 +1,4 @@
 import { expect, test } from "bun:test";
-import type { ToolBundle } from "@intx/agent";
-import type { ToolCall } from "@intx/types/runtime";
 
 import { ASK_USER_TOOL, interactionTools } from "./tool";
 import type { AskUserEnv } from "./tool";
@@ -26,16 +24,6 @@ async function withFetch<T>(
   }
 }
 
-function beforeTool(bundle: ToolBundle, call: ToolCall) {
-  const extension = bundle.beforeToolExtension;
-  if (extension === undefined) {
-    throw new Error(
-      "interactionTools did not contribute a beforeToolExtension",
-    );
-  }
-  return extension.beforeTool(call, {} as never, new AbortController().signal);
-}
-
 test("declares exactly ask_user, with no approval gate", () => {
   expect(interactionTools.definitions).toEqual([{ name: ASK_USER_TOOL }]);
 });
@@ -48,7 +36,12 @@ test("requires the sanctioned env keys", () => {
   ]);
 });
 
-test("ask_user posts a question block and suspends on a message_response gate", async () => {
+test("interactionTools contributes no beforeToolExtension: ask_user never suspends", () => {
+  const bundle = interactionTools(testEnv());
+  expect(bundle.beforeToolExtension).toBeUndefined();
+});
+
+test("ask_user posts a question block and ends the turn with the answer arriving as the next message", async () => {
   let posted = false;
   const fetchImpl = (async () => {
     posted = true;
@@ -67,21 +60,86 @@ test("ask_user posts a question block and suspends on a message_response gate", 
       options: ["Staging", "Production"],
     },
   };
-  const before = Date.now();
-  const decision = await withFetch(fetchImpl, () => beforeTool(bundle, call));
+  const result = await withFetch(fetchImpl, () =>
+    bundle.run(call, new AbortController().signal),
+  );
 
   expect(posted).toBe(true);
-  if (decision.type !== "suspend") {
-    throw new Error(`expected a suspend decision, got ${decision.type}`);
+  expect(result.isError).toBeFalsy();
+  expect(result.callId).toBe("call_1");
+  expect(String(result.content)).toMatch(/end this turn/i);
+  expect(String(result.content)).toMatch(/next inbound message/i);
+});
+
+test("ask_user's result text tells the model to stop, not to wait for a reply here", async () => {
+  const fetchImpl = (async () =>
+    new Response(
+      JSON.stringify({ id: "msg_1", createdAt: "2026-08-17T00:00:00.000Z" }),
+      { status: 201 },
+    )) as unknown as typeof fetch;
+
+  const bundle = interactionTools(testEnv());
+  const result = await withFetch(fetchImpl, () =>
+    bundle.run(
+      {
+        id: "call_1",
+        name: ASK_USER_TOOL,
+        arguments: { question: "Which environment?", options: ["A", "B"] },
+      },
+      new AbortController().signal,
+    ),
+  );
+
+  // This is instruction text in the model's own context, not something the
+  // runtime enforces: nothing stops the model from calling another tool or
+  // continuing to talk after reading it (docs/CHAT.md).
+  expect(String(result.content)).toMatch(/end this turn now/i);
+  expect(String(result.content)).toMatch(/do not wait for a reply here/i);
+});
+
+test("retrying ask_user for the same call reuses the questionId so a crash between post and return cannot orphan a second card", async () => {
+  const postedQuestionIds: string[] = [];
+  const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as {
+      parts: readonly {
+        block: { data: Record<string, unknown> };
+      }[];
+    };
+    const questionId = body.parts[0]?.block.data["questionId"];
+    if (typeof questionId === "string") postedQuestionIds.push(questionId);
+    return new Response(
+      JSON.stringify({
+        id: `msg_${postedQuestionIds.length}`,
+        createdAt: "2026-08-17T00:00:00.000Z",
+      }),
+      { status: 201 },
+    );
+  }) as unknown as typeof fetch;
+
+  const bundle = interactionTools(testEnv());
+  const call = {
+    id: "call_1",
+    name: ASK_USER_TOOL,
+    arguments: {
+      question: "Which environment?",
+      options: ["Staging", "Production"],
+    },
+  };
+
+  await withFetch(fetchImpl, () =>
+    bundle.run(call, new AbortController().signal),
+  );
+  await withFetch(fetchImpl, () =>
+    bundle.run(call, new AbortController().signal),
+  );
+
+  expect(postedQuestionIds).toHaveLength(2);
+  const reusedId = postedQuestionIds[0];
+  if (reusedId === undefined) {
+    throw new Error("expected a posted questionId");
   }
-  expect(decision.gate.type).toBe("message_response");
-  expect(decision.gate.timeoutAt).toBeGreaterThan(before);
-  expect(decision.pendingOp.kind).toBe("message_response");
-  expect(decision.pendingOp.suspendedCall).toEqual(call);
-  expect(decision.pendingOp.correlationId).toBe(decision.gate.correlationId);
-  // Minted by `postQuestion` (`q_<hex32>`), not a separately-minted
-  // `crypto.randomUUID()` — the gate and the question card share one id.
-  expect(decision.gate.correlationId).toMatch(/^q_[0-9a-f]{32}$/);
+  expect(postedQuestionIds[1]).toBe(reusedId);
+  expect(reusedId).toMatch(/^q_[0-9a-f]{32}$/);
 });
 
 test("ask_user rejects fewer than 2 options before ever posting", async () => {
@@ -92,58 +150,48 @@ test("ask_user rejects fewer than 2 options before ever posting", async () => {
   }) as unknown as typeof fetch;
 
   const bundle = interactionTools(testEnv());
-  const decision = await withFetch(fetchImpl, () =>
-    beforeTool(bundle, {
-      id: "call_1",
-      name: ASK_USER_TOOL,
-      arguments: { question: "Q?", options: ["only one"] },
-    }),
+  const result = await withFetch(fetchImpl, () =>
+    bundle.run(
+      {
+        id: "call_1",
+        name: ASK_USER_TOOL,
+        arguments: { question: "Q?", options: ["only one"] },
+      },
+      new AbortController().signal,
+    ),
   );
 
   expect(posted).toBe(false);
-  expect(decision.type).toBe("block");
+  expect(result.isError).toBe(true);
 });
 
-test("ask_user surfaces a no-own-channel failure as a blocked call, not a throw", async () => {
+test("ask_user surfaces a no-own-channel failure as an error result, not a throw", async () => {
   const fetchImpl = (async () =>
     new Response(
-      JSON.stringify({ error: { code: "not_found", message: "no channel" } }),
+      JSON.stringify({
+        error: {
+          code: "not_found",
+          userMessage: "no channel found",
+          refId: "ref_test",
+        },
+      }),
       { status: 404 },
     )) as unknown as typeof fetch;
 
   const bundle = interactionTools(testEnv());
-  const decision = await withFetch(fetchImpl, () =>
-    beforeTool(bundle, {
-      id: "call_1",
-      name: ASK_USER_TOOL,
-      arguments: { question: "Q?", options: ["a", "b"] },
-    }),
+  const result = await withFetch(fetchImpl, () =>
+    bundle.run(
+      {
+        id: "call_1",
+        name: ASK_USER_TOOL,
+        arguments: { question: "Q?", options: ["a", "b"] },
+      },
+      new AbortController().signal,
+    ),
   );
 
-  if (decision.type !== "block") {
-    throw new Error(`expected a block decision, got ${decision.type}`);
-  }
-  expect(decision.reason).toContain("no channel");
-});
-
-test("a call for another tool name is allowed through unsuspended", async () => {
-  const bundle = interactionTools(testEnv());
-  const decision = await beforeTool(bundle, {
-    id: "call_1",
-    name: "some_other_tool",
-    arguments: {},
-  });
-  expect(decision).toEqual({ type: "allow" });
-});
-
-test("run() is never the ask_user path: reaching it fails loud", async () => {
-  const bundle = interactionTools(testEnv());
-  const result = await bundle.run(
-    { id: "call_1", name: ASK_USER_TOOL, arguments: {} },
-    new AbortController().signal,
-  );
   expect(result.isError).toBe(true);
-  expect(String(result.content)).toContain("beforeToolExtension");
+  expect(result.content).toBe("no channel found");
 });
 
 test("an unknown tool name returns an honest error", async () => {

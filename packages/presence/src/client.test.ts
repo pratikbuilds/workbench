@@ -490,6 +490,93 @@ describe("connectPresence: error reporting and rejoin (CL-7202)", () => {
     handle.disconnect();
   });
 
+  test("a successful join is reported through onRecovered", async () => {
+    let recovered = 0;
+    const handle = connectPresence({
+      roomUrl: ROOM_URL,
+      fetchImpl: fakeFetch([]),
+      openEventSource: () => new FakeEventSource(),
+    });
+    handle.onRecovered(() => {
+      recovered += 1;
+    });
+
+    await flushMicrotasks();
+
+    expect(recovered).toBe(1);
+    handle.disconnect();
+  });
+
+  test("a failed join is not reported through onRecovered", async () => {
+    let recovered = 0;
+    const handle = connectPresence({
+      roomUrl: ROOM_URL,
+      fetchImpl: scriptedFetch([], () => 500),
+      openEventSource: () => new FakeEventSource(),
+    });
+    handle.onRecovered(() => {
+      recovered += 1;
+    });
+
+    await flushMicrotasks();
+
+    expect(recovered).toBe(0);
+    handle.disconnect();
+  });
+
+  test("a successful heartbeat after a failed one is reported through onRecovered", async () => {
+    let heartbeatStatus = 500;
+    let recovered = 0;
+    const fetchImpl: PresenceFetch = (url) => {
+      const status = url.endsWith("/heartbeat") ? heartbeatStatus : 200;
+      return Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve({}),
+      });
+    };
+    const handle = connectPresence({
+      roomUrl: ROOM_URL,
+      fetchImpl,
+      openEventSource: () => new FakeEventSource(),
+    });
+    handle.onRecovered(() => {
+      recovered += 1;
+    });
+    await flushMicrotasks();
+    expect(recovered).toBe(1);
+
+    handle.publishTyping(true);
+    await flushMicrotasks();
+    expect(recovered).toBe(1);
+
+    heartbeatStatus = 200;
+    handle.publishTyping(false);
+    await flushMicrotasks();
+    expect(recovered).toBe(2);
+    handle.disconnect();
+  });
+
+  test("onRecovered's unsubscribe stops further delivery", async () => {
+    let recovered = 0;
+    const handle = connectPresence({
+      roomUrl: ROOM_URL,
+      fetchImpl: fakeFetch([]),
+      openEventSource: () => new FakeEventSource(),
+    });
+    const unsubscribe = handle.onRecovered(() => {
+      recovered += 1;
+    });
+    await flushMicrotasks();
+    expect(recovered).toBe(1);
+    unsubscribe();
+
+    handle.publishTyping(true);
+    await flushMicrotasks();
+    expect(recovered).toBe(1);
+    handle.disconnect();
+  });
+
   test("a client stuck unable to join backs off instead of re-posting on every publish call", async () => {
     let clock = 0;
     const calls: string[] = [];

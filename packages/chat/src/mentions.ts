@@ -12,14 +12,13 @@ import type { Part as PartType } from "./parts";
 import type { ParticipantRecord } from "./participants";
 
 /**
- * A participant is an agent address (mention-fannable) rather than a
- * bare principal id when it carries the "@domain" shape every agent
- * address has. Bare principal ids are never fanned a copy: only
- * mentions of other runs' anchors are, since a human participant reads
- * the workbench's own timeline directly.
+ * A participant is an agent address (mention-fannable) when it has the
+ * `local@domain` shape every agent address has and is not a principal.
+ * Humans are `prn_…` — bare or `prn_…@tenant.domain` — and read the
+ * workbench's own timeline directly, so they are never fanned a copy.
  */
 export function isAgentAddress(participant: string): boolean {
-  return participant.includes("@");
+  return participant.includes("@") && !participant.startsWith("prn_");
 }
 
 function escapeForRegExp(text: string): string {

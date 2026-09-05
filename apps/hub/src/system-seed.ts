@@ -22,7 +22,6 @@ import { getLogger } from "@intx/log";
 import {
   seedTenant,
   seedCatalog,
-  ensureDefaultRoutines,
   createGitWorkflowPusher,
   publishCorbitsToolsRegistry,
   DEFAULT_WORKFLOWS,
@@ -69,10 +68,9 @@ export type SystemSeedDeps = {
 /**
  * Seeds the root tenant once: the default workflow set, then the tenant
  * catalog (a real credential when a hub-owned seed model is configured, a
- * placeholder one otherwise), then the default routine presets. Never
- * throws — a failure that persists past the deadline is logged and left
- * for the next boot to retry, the same "safe to re-run" property
- * `workbench seed` always had.
+ * placeholder one otherwise). Never throws — a failure that persists past
+ * the deadline is logged and left for the next boot to retry, the same
+ * "safe to re-run" property `workbench seed` always had.
  */
 export async function runSystemSeed(deps: SystemSeedDeps): Promise<void> {
   const api: ApiCall = createHubAPI(deps.baseUrl);
@@ -133,13 +131,6 @@ export async function runSystemSeed(deps: SystemSeedDeps): Promise<void> {
           ? { apiKey: deps.seedModel.apiKey }
           : { placeholderCredential: true }),
       });
-
-      await ensureDefaultRoutines(
-        api,
-        session.cookies,
-        tenant.tenantId,
-        (line) => log.info`${line}`,
-      );
 
       log.info`root tenant seed complete`;
       return;

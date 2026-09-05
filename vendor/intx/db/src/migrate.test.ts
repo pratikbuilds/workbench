@@ -27,7 +27,7 @@ describeIfDb("runMigrations replays the shipped SQL into a fresh schema", () => 
   const config = configFromUrl(databaseUrl);
   afterAll(() => dropSchema(config, { schema }));
 
-  test("lands upstream's approval run index and both workbench columns", async () => {
+  test("lands upstream's approval run index and workbench columns", async () => {
     await runMigrations(config, { schema });
     const sql = postgres({ ...config, max: 1, onnotice: () => undefined });
     try {
@@ -36,9 +36,11 @@ describeIfDb("runMigrations replays the shipped SQL into a fresh schema", () => 
         WHERE table_schema = ${schema}
           AND (table_name, column_name) IN (
             ('workflow_definition_version', 'wire_projection'),
-            ('workflow_definition', 'origin'))`;
+            ('workflow_definition', 'origin'),
+            ('workflow_definition', 'schedule_claimed_minute'))`;
       expect(columns.map((row) => row.column_name).sort()).toEqual([
         "origin",
+        "schedule_claimed_minute",
         "wire_projection",
       ]);
       const indexes = await sql<{ indexname: string }[]>`

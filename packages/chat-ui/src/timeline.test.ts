@@ -45,6 +45,19 @@ describe("friendlyEventText — workbench.agent-joined (CL-6594)", () => {
     };
     expect(friendlyEventText(part, [])).toBe("An agent joined");
   });
+
+  test("prefers the resolved display name over the handle slug (CL-6424)", () => {
+    const participants: readonly ParticipantRecord[] = [
+      { address: "run_myra@dana.localhost", handle: "myra" },
+    ];
+    expect(
+      friendlyEventText(
+        agentJoinedPart("run_myra@dana.localhost"),
+        participants,
+        new Map([["run_myra@dana.localhost", "Myra the Helper"]]),
+      ),
+    ).toBe("Myra the Helper joined");
+  });
 });
 
 describe("friendlyEventText — connection.connected (CL-6741)", () => {

@@ -11,6 +11,8 @@ export const SETTINGS_STRINGS = {
   groupEveryoneLabel: "Shared Settings",
   advancedSectionsSummary: "Advanced",
   advancedSectionsHint: "Roles, granular permissions, and activity history.",
+  accessProbeFailedHint:
+    "Couldn't check access for some sections. They'll show up here once that succeeds.",
 
   notificationsSectionTitle: "Notifications",
   notificationsSectionDescription: "How activity reaches you.",
@@ -191,7 +193,7 @@ export const SETTINGS_STRINGS = {
 
   connectionsSectionTitle: "AI providers",
   connectionsSectionDescription:
-    "Choose the model route Myra and new workbenches use, then connect the providers behind it.",
+    "Choose the model route Myra and new agents use, then connect the providers behind it. Changing the default does not rewrite existing agents.",
   connectionsLoadError: "connections",
   connectionsStatusNotConnected: "Not connected",
   connectionsStatusConnected: "Connected",

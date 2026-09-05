@@ -43,19 +43,6 @@ export interface WorldAgentDefinition {
   readonly model: string | null;
 }
 
-/** One routine row. `trigger` is kept structural (not the
- * `@corbits/routines` arktype-validated type) so this package never
- * takes a hard dependency on that package's wire shape, only its
- * table. */
-export interface WorldRoutine {
-  readonly id: string;
-  readonly name: string;
-  readonly definitionAssetId: string;
-  readonly trigger: unknown;
-  readonly deliveryWorkbenchId: string | null;
-  readonly enabled: boolean;
-}
-
 /** One connected external system — an MCP server or another connector
  * — with whether its credential is currently active. */
 export interface WorldConnection {
@@ -91,7 +78,6 @@ export interface FakeReceipt {
 export interface WorldSnapshot {
   readonly capturedAt: string;
   readonly agentDefinitions: readonly WorldAgentDefinition[];
-  readonly routines: readonly WorldRoutine[];
   readonly connections: readonly WorldConnection[];
   readonly webhookTriggers: readonly WorldWebhookTrigger[];
   readonly fakeReceipts: readonly FakeReceipt[];
@@ -214,18 +200,14 @@ export interface RunConfig {
 /** A target is anything that can play one scripted human turn and
  * report what happened — a real Myra deployment (targets/real-stack.ts)
  * or a fake for unit-testing the runner itself (runner.test.ts).
- * `snapshotWorld` and `fireRoutine` are optional capabilities: not
- * every target can read the tenant's own tables or fire a routine
- * occurrence (a scripted-only fake `Target` can do neither), so
- * `runEval` guards `snapshotWorld` and falls back to an empty
- * `WorldSnapshot`, and a case that calls `fireRoutine` against a
- * `Target` missing it gets a loud, named error at the call site —
- * never a silent no-op. */
+ * `snapshotWorld` is an optional capability: not every target can
+ * read the tenant's own tables (a scripted-only fake `Target` can
+ * skip it), so `runEval` guards `snapshotWorld` and falls back to an
+ * empty `WorldSnapshot`. */
 export interface Target {
   readonly configName: string;
   sendTurn(human: string): Promise<Turn>;
   snapshotWorld?(): Promise<WorldSnapshot>;
-  fireRoutine?(routineId: string): Promise<Turn>;
   /** Installs a seeded workbench template through the real install
    * surfaces (library read → workbench mint → participant creation);
    * the returned `Turn` records what the install actually did. */

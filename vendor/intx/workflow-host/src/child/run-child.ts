@@ -901,8 +901,8 @@ export async function runWorkflowChild(
       warmCache,
       sourcesRef,
       credentialWiring,
-      onEvent: (event) => {
-        void eventSender.send(event).catch((cause) => {
+      onEvent: (event, childRunId) => {
+        void eventSender.send(event, childRunId).catch((cause) => {
           logger.error`event-channel send failed during resume run ${run.runId}: ${String(cause)}`;
         });
       },
@@ -1171,8 +1171,8 @@ async function handleControlPayload(
         warmCache: ctx.warmCache,
         sourcesRef: ctx.sourcesRef,
         credentialWiring: ctx.credentialWiring,
-        onEvent: (event) => {
-          void ctx.eventSender.send(event).catch((cause) => {
+        onEvent: (event, childRunId) => {
+          void ctx.eventSender.send(event, childRunId).catch((cause) => {
             logger.error`event-channel send failed during run ${payload.data.runId}: ${String(cause)}`;
           });
         },
@@ -1622,7 +1622,7 @@ function buildRuntimeEnv(args: {
   warmCache: WarmAgentCache | undefined;
   sourcesRef: SourcesSnapshotRef;
   credentialWiring: CredentialWiring;
-  onEvent: (event: EventPayload) => void;
+  onEvent: (event: EventPayload, childRunId?: string) => void;
   upstreamSender: ControlChannelSender;
 }): WorkflowRuntimeEnv {
   const signalChannel = createWorkflowHostSignalChannel({
@@ -1681,7 +1681,10 @@ function buildRuntimeEnv(args: {
   const spawnSuspendableChild: SpawnSuspendableChild | undefined =
     hostSuspendable === undefined
       ? undefined
-      : (spawnInput) => hostSuspendable(spawnInput, args.onEvent);
+      : (spawnInput) =>
+          hostSuspendable(spawnInput, (event) => {
+            args.onEvent(event, spawnInput.childRunId);
+          });
   const env: WorkflowRuntimeEnv = {
     repoStore: args.runtimeRepoStore,
     scheduler: args.bindings.scheduler,

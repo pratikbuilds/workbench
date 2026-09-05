@@ -28,32 +28,22 @@ describe("describeCorbitsToolPackages", () => {
     }
   });
 
-  test("routines-tools gates only immediate routine execution", async () => {
-    const descriptions = await describeCorbitsToolPackages();
-    const routines = descriptions.find(
-      (description) => description.name === "@corbits/routines-tools",
-    );
-    expect(routines).toBeDefined();
-    const byQualifiedId = new Map(
-      routines?.tools.map((tool) => [tool.qualifiedId, tool]) ?? [],
-    );
-    expect(
-      byQualifiedId.get("@corbits/routines-tools/routines:routine_create")
-        ?.approval,
-    ).toBeUndefined();
-    expect(
-      byQualifiedId.get("@corbits/routines-tools/routines:routine_update")
-        ?.approval,
-    ).toBeUndefined();
-    expect(
-      byQualifiedId.get("@corbits/routines-tools/routines:routine_run_now")
-        ?.approval,
-    ).toBe("ask");
-  });
-
   test("caches across calls (same source for the process lifetime)", async () => {
     const first = await describeCorbitsToolPackages();
     const second = await describeCorbitsToolPackages();
     expect(second).toBe(first);
+  });
+
+  test("tools-skills grants exactly one qualifiedId for skills_load, not the old load_skill name", async () => {
+    const descriptions = await describeCorbitsToolPackages();
+    const skills = descriptions.find(
+      (description) => description.name === "@corbits/tools-skills",
+    );
+    expect(skills).toBeDefined();
+    const qualifiedIds = skills?.tools.map((tool) => tool.qualifiedId) ?? [];
+    expect(qualifiedIds).toContain("@corbits/tools-skills/skills:skills_load");
+    expect(qualifiedIds).not.toContain(
+      "@corbits/tools-skills/skills:load_skill",
+    );
   });
 });

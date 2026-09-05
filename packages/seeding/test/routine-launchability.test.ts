@@ -18,7 +18,11 @@
 // dangling reference nothing would ever execute.
 import { expect, test } from "bun:test";
 
-import { DEFAULT_WORKFLOWS, type ModelSource } from "../src/seed";
+import {
+  CATALOG_WORKFLOWS,
+  DEFAULT_WORKFLOWS,
+  type ModelSource,
+} from "../src/seed";
 
 const FAKE_MODEL: ModelSource = {
   provider: "ollama",
@@ -32,9 +36,11 @@ type SerializedStepDefinition = {
   readonly steps: Readonly<Record<string, unknown>>;
 };
 
-test("every default workflow's deployed definition is a well-formed, launchable step graph", () => {
-  for (const workflow of DEFAULT_WORKFLOWS) {
-    const json = workflow.buildJson("example.test", FAKE_MODEL);
+test("every default and on-demand catalog workflow's deployed definition is a well-formed, launchable step graph", () => {
+  for (const workflow of [...DEFAULT_WORKFLOWS, ...CATALOG_WORKFLOWS]) {
+    const json = workflow.buildJson("example.test", [
+      { provider: FAKE_MODEL.provider, model: FAKE_MODEL.model },
+    ]);
     const definition = JSON.parse(json) as SerializedStepDefinition;
 
     expect(

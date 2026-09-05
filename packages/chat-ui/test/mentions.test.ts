@@ -72,6 +72,25 @@ describe("mentionCandidatesFromParticipants", () => {
       ]),
     ).toEqual([]);
   });
+
+  test("prefers the resolved display name over the slug-derived label (CL-6424)", () => {
+    expect(
+      mentionCandidatesFromParticipants(
+        [
+          { address: "ins_echo@agents.example", handle: "echo" },
+          { address: "ins_review@agents.example", handle: "code-review" },
+        ],
+        new Map([["ins_echo@agents.example", "Myra"]]),
+      ),
+    ).toEqual([
+      { id: "ins_echo@agents.example", handle: "echo", label: "Myra" },
+      {
+        id: "ins_review@agents.example",
+        handle: "code-review",
+        label: "Code Review",
+      },
+    ]);
+  });
 });
 
 describe("filterMentionCandidates", () => {
@@ -176,6 +195,19 @@ describe("mentionOptionsFromWorkbench and filterMentionOptions (CL-5879 mention-
     expect(filtered.map((option) => option.candidate.handle)).toEqual([
       "researcher",
       "reed",
+    ]);
+  });
+
+  test("in-workbench agent rows show the resolved display name (CL-6424)", () => {
+    const options = mentionOptionsFromWorkbench(
+      [{ address: "researcher@agents.example", handle: "researcher" }],
+      [],
+      [],
+      new Map([["researcher@agents.example", "Myra"]]),
+    );
+    expect(options.map((option) => option.candidate.label)).toEqual(["Myra"]);
+    expect(options.map((option) => option.candidate.handle)).toEqual([
+      "researcher",
     ]);
   });
 });

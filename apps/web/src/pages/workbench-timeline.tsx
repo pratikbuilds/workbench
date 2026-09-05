@@ -1,38 +1,25 @@
 // Per-workbench Insights view (CL-6224): one wall-clock spine merging chat
-// messages, thread forks, routine runs, and approvals for a single workbench
+// messages, thread forks, and approvals for a single workbench
 // (== workbench, per docs/GLOSSARY.md), oldest to newest with day dividers.
 // No new backend — every fetch here is an existing route this app already
-// reads elsewhere (chat-ui, routines-api, api.ts); the new work is
+// reads elsewhere (chat-ui, api.ts); the new work is
 // `../workbench-timeline-merge.ts`'s pure merge, plus this render.
 
-import {
-  Badge,
-  Button,
-  RichEmptyState,
-  Skeleton,
-  type BadgeTone,
-} from "@corbits/react-ui";
+import { Badge, RichEmptyState, Skeleton } from "@corbits/react-ui";
 import { listMessages, listThreads } from "@corbits/chat-ui";
 import { Clock } from "@corbits/icons";
 import { useMemo, useState } from "react";
 
 import { usePendingApprovals } from "../pending-approvals";
-import {
-  listRoutineRuns,
-  listRoutines,
-  useTenantQuery,
-  type RoutineRun,
-} from "../routines-api";
+import { useTenantQuery } from "../routines-api";
 import { tenantKeys } from "../query-client";
 import {
   computeTimelineDayKpis,
   filterTimelineEvents,
   groupTimelineByDay,
   mergeTimelineEvents,
-  routinesForWorkbench,
   toApprovalEvents,
   toMessageEvents,
-  toRoutineRunEvents,
   toThreadForkEvents,
   type TimelineEvent,
   type TimelineFilter,
@@ -44,7 +31,6 @@ const FILTERS: readonly {
 }[] = [
   { id: "all", label: "All" },
   { id: "messages", label: "Messages" },
-  { id: "runs", label: "Runs" },
   { id: "approvals", label: "Approvals" },
 ];
 
@@ -57,17 +43,6 @@ function timeOfDay(iso: string): string {
   });
 }
 
-function routineRunTone(status: "ok" | "failed" | "running"): BadgeTone {
-  switch (status) {
-    case "ok":
-      return "success";
-    case "failed":
-      return "danger";
-    case "running":
-      return "info";
-  }
-}
-
 function markerClass(event: TimelineEvent): string {
   switch (event.kind) {
     case "message":
@@ -76,24 +51,12 @@ function markerClass(event: TimelineEvent): string {
         : "workbench-timeline-marker-neutral";
     case "thread-fork":
       return "workbench-timeline-marker-neutral";
-    case "routine-run":
-      return event.status === "ok"
-        ? "workbench-timeline-marker-success"
-        : event.status === "failed"
-          ? "workbench-timeline-marker-danger"
-          : "workbench-timeline-marker-info";
     case "approval":
       return "workbench-timeline-marker-warn";
   }
 }
 
-function TimelineRowBody({
-  event,
-  onOpenRun,
-}: {
-  readonly event: TimelineEvent;
-  readonly onOpenRun: (runId: string) => void;
-}) {
+function TimelineRowBody({ event }: { readonly event: TimelineEvent }) {
   switch (event.kind) {
     case "message":
       return (
@@ -113,26 +76,6 @@ function TimelineRowBody({
           </span>
         </div>
       );
-    case "routine-run":
-      return (
-        <div className="workbench-timeline-entry-body">
-          <span>
-            Routine {event.routineName} ran ·{" "}
-            {event.durationMs === null
-              ? "duration unknown"
-              : `${(event.durationMs / 1000).toFixed(1)}s`}
-          </span>
-          <Badge tone={routineRunTone(event.status)}>{event.status}</Badge>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => onOpenRun(event.runId)}
-          >
-            Open trace
-          </Button>
-        </div>
-      );
     case "approval":
       return (
         <div className="workbench-timeline-entry-body">
@@ -145,13 +88,7 @@ function TimelineRowBody({
   }
 }
 
-function TimelineRow({
-  event,
-  onOpenRun,
-}: {
-  readonly event: TimelineEvent;
-  readonly onOpenRun: (runId: string) => void;
-}) {
+function TimelineRow({ event }: { readonly event: TimelineEvent }) {
   const indented = event.kind === "thread-fork";
   return (
     <li
@@ -166,7 +103,7 @@ function TimelineRow({
       <span className="workbench-timeline-entry-time">
         {timeOfDay(event.at)}
       </span>
-      <TimelineRowBody event={event} onOpenRun={onOpenRun} />
+      <TimelineRowBody event={event} />
     </li>
   );
 }
@@ -189,10 +126,6 @@ function DayKpiRow({
           <dd>{kpi.agentTurns}</dd>
         </div>
         <div>
-          <dt>Routine runs</dt>
-          <dd>{kpi.routineRuns}</dd>
-        </div>
-        <div>
           <dt>Approvals</dt>
           <dd>{kpi.approvals}</dd>
         </div>
@@ -204,11 +137,9 @@ function DayKpiRow({
 export function WorkbenchTimelineView({
   events,
   loading,
-  onOpenRun,
 }: {
   readonly events: readonly TimelineEvent[];
   readonly loading: boolean;
-  readonly onOpenRun: (runId: string) => void;
 }) {
   const [filter, setFilter] = useState<TimelineFilter>("all");
   const filtered = useMemo(
@@ -227,7 +158,7 @@ export function WorkbenchTimelineView({
       <RichEmptyState
         icon={<Clock />}
         title="Nothing on this workbench's timeline yet"
-        description="Messages, routine runs, and approvals will show up here as they happen."
+        description="Messages and approvals will show up here as they happen."
       />
     );
   }
@@ -267,7 +198,6 @@ export function WorkbenchTimelineView({
                     <TimelineRow
                       key={`${event.kind}-${event.id}`}
                       event={event}
-                      onOpenRun={onOpenRun}
                     />
                   ))}
                 </ol>
@@ -294,12 +224,11 @@ export function WorkbenchTimelineView({
  * `workbenchId` is the workbench's own id, resolved to that workbench tenant
  * one level up in `InsightsWorkbenchPage` (`../insights-workbench-scope.ts`)
  * for the tenant-scoped Insights endpoints; this component only ever reads
- * messages/threads/routines/approvals off the owning bench.
+ * messages/threads/approvals off the owning bench.
  */
 export function WorkbenchTimelineRoute({
   benchTenantId,
   workbenchId,
-  onOpenRun,
 }: {
   readonly benchTenantId: string | null;
   readonly workbenchId: string;
@@ -325,49 +254,15 @@ export function WorkbenchTimelineRoute({
         (page) => page.items,
       ),
   );
-  const routinesQuery = useTenantQuery(
-    benchTenantId === null
-      ? ["tenant", "none", "routines"]
-      : tenantKeys.routines(benchTenantId),
-    benchTenantId !== null,
-    () => listRoutines(benchTenantId as string),
-  );
-  const routines =
-    routinesQuery.kind === "ready"
-      ? routinesForWorkbench(routinesQuery.data, workbenchId)
-      : [];
-  const routineRunsQuery = useTenantQuery<
-    ReadonlyMap<string, readonly RoutineRun[]>
-  >(
-    benchTenantId === null
-      ? ["tenant", "none", "workbench-timeline-routine-runs", workbenchId]
-      : tenantKeys.workbenchTimelineRoutineRuns(benchTenantId, workbenchId),
-    benchTenantId !== null && routines.length > 0,
-    async () => {
-      const entries = await Promise.all(
-        routines.map(
-          async (routine) =>
-            [
-              routine.id,
-              await listRoutineRuns(benchTenantId as string, routine.id),
-            ] as const,
-        ),
-      );
-      return new Map(entries);
-    },
-  );
   const approvalsQuery = usePendingApprovals(benchTenantId);
 
   const loading =
     messagesQuery.kind === "loading" ||
     threadsQuery.kind === "loading" ||
-    routinesQuery.kind === "loading" ||
     approvalsQuery.kind === "loading";
 
   const messages = messagesQuery.kind === "ready" ? messagesQuery.data : [];
   const threads = threadsQuery.kind === "ready" ? threadsQuery.data : [];
-  const routineRunsByRoutineId =
-    routineRunsQuery.kind === "ready" ? routineRunsQuery.data : new Map();
   // An approval carries no workbench id (a known v1 gap — see
   // workbench-timeline-merge.ts's toApprovalEvents), so this is every
   // pending approval on the owning bench, not just this workbench's own.
@@ -376,15 +271,8 @@ export function WorkbenchTimelineRoute({
   const events = mergeTimelineEvents({
     messages: toMessageEvents(messages),
     threadForks: toThreadForkEvents(threads),
-    routineRuns: toRoutineRunEvents(routines, routineRunsByRoutineId),
     approvals: toApprovalEvents(approvals),
   });
 
-  return (
-    <WorkbenchTimelineView
-      events={events}
-      loading={loading}
-      onOpenRun={onOpenRun}
-    />
-  );
+  return <WorkbenchTimelineView events={events} loading={loading} />;
 }

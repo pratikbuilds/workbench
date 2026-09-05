@@ -60,6 +60,8 @@ import {
 } from "./workbench-service";
 import type { ChatStore } from "./store";
 import { Part, type Part as PartType } from "./parts";
+import { QuestionBlockData } from "./blocks";
+import type { RoomMessage, RoomMessageStore } from "./room-messages";
 import {
   CONNECTIONS_PENDING_KEY,
   connectServiceConnectorIds,
@@ -108,6 +110,37 @@ const MintDmInput = type({ definitionId: "string > 0" });
 
 const PostMessageInput = type({ parts: Part.array() });
 
+function questionIdFromParts(parts: readonly PartType[]): string | undefined {
+  for (const part of parts) {
+    if (part.kind !== "block" || part.block.type !== "question") continue;
+    const parsed = QuestionBlockData(part.block.data);
+    if (parsed instanceof type.errors) continue;
+    return parsed.questionId;
+  }
+  return undefined;
+}
+
+async function existingQuestionMessage(
+  roomMessages: Pick<RoomMessageStore, "listMessages">,
+  tenantId: string,
+  workbenchId: string,
+  questionId: string,
+): Promise<RoomMessage | undefined> {
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await roomMessages.listMessages({
+      tenantId,
+      workbenchId,
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+    for (const item of page.items) {
+      if (questionIdFromParts(item.parts) === questionId) return item;
+    }
+    if (page.nextCursor === undefined) return undefined;
+    cursor = page.nextCursor;
+  }
+}
+
 export type CreateWorkflowParticipantRoutesDeps = {
   readonly store: Pick<
     ChatStore,
@@ -132,6 +165,10 @@ export type CreateWorkflowParticipantRoutesDeps = {
    * (CL-7201) — shared, never a second instance, so a cancel request
    * reaches a controller registered from either entry point. */
   readonly turnCancellation: SendWorkbenchMessageDeps["turnCancellation"];
+  /** The same dispatch-mail correlation `createChatRoutes` is given
+   * (CL-6314) — shared, never a second instance, so a workflow-child
+   * message's dispatch records the same way a person's own send does. */
+  readonly turnMailCorrelation?: SendWorkbenchMessageDeps["turnMailCorrelation"];
   readonly authenticator: WorkflowRunAuthenticator;
   readonly tenancy: Pick<
     WorkbenchTenancyStore,
@@ -432,6 +469,25 @@ export function createWorkflowParticipantRoutes(
       );
     }
 
+    // Re-posting a question card with the same questionId is a no-op that
+    // returns the existing message (CL-7248). `ask_user` derives that id
+    // from the tool-call id, so a crash between the first post and
+    // `suspendOnGate` retries the same id instead of orphaning a second
+    // card. Looked up before any other write so the retry also skips
+    // connect-service pending-set mutation.
+    const questionId = questionIdFromParts(body.parts);
+    if (questionId !== undefined) {
+      const existing = await existingQuestionMessage(
+        deps.roomMessages,
+        scope.tenantId,
+        workbench.workbenchId,
+        questionId,
+      );
+      if (existing !== undefined) {
+        return c.json({ id: existing.id, createdAt: existing.createdAt }, 200);
+      }
+    }
+
     // A connect-service card registers its connector on the room's own
     // settings before the message lands, so a later connection completing
     // in the browser can find this room and settle the card
@@ -470,6 +526,9 @@ export function createWorkflowParticipantRoutes(
         publish: deps.publish,
         turnQueue: deps.turnQueue,
         turnCancellation: deps.turnCancellation,
+        ...(deps.turnMailCorrelation !== undefined
+          ? { turnMailCorrelation: deps.turnMailCorrelation }
+          : {}),
       },
       {
         tenantId: scope.tenantId,

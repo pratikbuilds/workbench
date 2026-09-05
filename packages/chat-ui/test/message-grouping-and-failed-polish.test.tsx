@@ -54,11 +54,11 @@ describe("consecutive same-author grouping", () => {
     expect(groups[1]?.getAttribute("data-grouped")).toBe("true");
 
     const rows = el.querySelectorAll(".chat-bubble-row");
-    expect(rows[0]?.querySelector(".chat-sender-avatar-button")).not.toBeNull();
+    expect(rows[0]?.querySelector(".sender-avatar-button")).not.toBeNull();
     expect(rows[0]?.querySelector(".chat-bubble-head")).not.toBeNull();
 
     expect(rows[1]?.getAttribute("data-grouped")).toBe("true");
-    expect(rows[1]?.querySelector(".chat-sender-avatar-button")).toBeNull();
+    expect(rows[1]?.querySelector(".sender-avatar-button")).toBeNull();
     expect(rows[1]?.querySelector(".chat-bubble-head")).toBeNull();
     expect(rows[1]?.querySelector(".chat-bubble-time-grouped")).not.toBeNull();
   });
@@ -277,7 +277,7 @@ describe("own-message avatar initials never fabricate 'YO'", () => {
       principalId: "prn_self1",
       name: "Sawyer Cutler",
     });
-    expect(el.querySelector(".chat-sender-avatar")?.textContent).toBe("SC");
+    expect(el.querySelector(".sender-avatar")?.textContent).toBe("SC");
     expect(el.querySelector(".chat-bubble-sender")?.textContent).toBe(
       "Sawyer Cutler",
     );
@@ -288,13 +288,13 @@ describe("own-message avatar initials never fabricate 'YO'", () => {
       principalId: "prn_self1",
       handle: "sawyer@example.com",
     });
-    expect(el.querySelector(".chat-sender-avatar")?.textContent).toBe("S");
+    expect(el.querySelector(".sender-avatar")?.textContent).toBe("S");
     expect(el.querySelector(".chat-bubble-sender")?.textContent).toBe("You");
   });
 
   test("no name and no handle falls back to the honest unknown glyph, never 'YO'", async () => {
     const el = await mountOwn({ principalId: "prn_self1" });
-    expect(el.querySelector(".chat-sender-avatar")?.textContent).toBe("•");
+    expect(el.querySelector(".sender-avatar")?.textContent).toBe("•");
     expect(el.querySelector(".chat-bubble-sender")?.textContent).toBe("You");
   });
 });

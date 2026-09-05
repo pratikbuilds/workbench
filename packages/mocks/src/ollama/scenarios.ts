@@ -12,9 +12,11 @@ import type { OllamaChatReply } from "./types";
 const CL_6478_MALFORMED_TOOL_NAME =
   "@intx/tools-posix/sidecar-bundle:run_shell\n</parameter";
 
-// Round 1: a model called this instead of the real tool, `load_skill`
-// (packages/tools-skills/src/tool.ts). Plausible-sounding, never declared.
-const HALLUCINATED_TOOL_NAME = "skills_load";
+// A model calling the tool by its old, retired name instead of the
+// canonical `skills_load` (packages/tools-skills/src/tool.ts). `load_skill`
+// no longer exists as a tool; this fixture reproduces a model still
+// guessing it.
+const HALLUCINATED_TOOL_NAME = "load_skill";
 
 function nameOfExactLength(length: number): string {
   const prefix = "namespaced_tool_probe_";
@@ -51,8 +53,8 @@ export type AdversarialReplies = {
   /** A large enough text blob to exercise a truncation or blob-spill path
    * (`finishReason: "length"` -- the model hit its token cap). */
   oversized(approxChars?: number): OllamaChatReply;
-  /** A plausible-but-nonexistent tool name -- round 1 saw a model call
-   * `skills_load` when the real tool is `load_skill`. */
+  /** A plausible-but-nonexistent tool name -- a model calling `load_skill`,
+   * the tool's retired name, when the canonical tool is `skills_load`. */
   hallucinatedToolName(): OllamaChatReply;
 };
 

@@ -6,6 +6,7 @@ import {
   emptyOverallUsageSummary,
   summarizeUsage,
   summarizeUsageByTenant,
+  teamSpaceWorkbenchRows,
 } from "./queries";
 
 describe("summarizeUsage", () => {
@@ -430,5 +431,130 @@ describe("summarizeUsageByTenant", () => {
     expect(summedTurns).toBe(aggregate.turns);
     expect(aggregate.costUsd).not.toBeNull();
     expect(summedCost).toBe(aggregate.costUsd ?? 0);
+  });
+});
+
+describe("CL-6659 unreported tokens and team-space breakdowns", () => {
+  const zeroTokens = {
+    input: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    output: 0,
+    thinking: 0,
+  };
+
+  test("a recorded turn with no token counts is null cost, not $0.00", async () => {
+    const store = createMemoryUsageStore();
+    await store.insertUsage({
+      id: "u1",
+      tenantId: "tenant-acme",
+      sessionId: "s1",
+      turnId: "t1",
+      provider: "ollama",
+      model: "qwen3:latest",
+      tokens: zeroTokens,
+    });
+
+    const summary = await summarizeUsage(store, ["tenant-acme"]);
+    expect(summary.turns).toBe(1);
+    expect(summary.tokens.total).toBe(0);
+    expect(summary.costUsd).toBeNull();
+    expect(summary.byModel[0]?.costUsd).toBeNull();
+  });
+
+  test("ollama turns with real tokens and a FREE catalog row cost $0, not null", async () => {
+    const store = createMemoryUsageStore();
+    await store.insertUsage({
+      id: "u1",
+      tenantId: "tenant-acme",
+      sessionId: "s1",
+      turnId: "t1",
+      provider: "ollama",
+      model: "qwen3.8:27b",
+      tokens: {
+        input: 100,
+        cacheRead: 0,
+        cacheWrite: 0,
+        output: 50,
+        thinking: 0,
+      },
+    });
+
+    const summary = await summarizeUsage(store, ["tenant-acme"]);
+    expect(summary.turns).toBe(1);
+    expect(summary.tokens.total).toBe(150);
+    expect(summary.costUsd).toBe(0);
+  });
+
+  test("team-space parent with recorded turns stays in the workbench breakdown", () => {
+    const rows = [
+      {
+        tenantId: "team-root",
+        turns: 3,
+        tokens: {
+          input: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 0,
+          thinking: 0,
+          total: 0,
+        },
+        costUsd: null,
+      },
+      {
+        tenantId: "workbench-a",
+        turns: 0,
+        tokens: {
+          input: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 0,
+          thinking: 0,
+          total: 0,
+        },
+        costUsd: 0,
+      },
+    ];
+    const kept = teamSpaceWorkbenchRows(rows, {
+      tenantId: "team-root",
+      isTeamSpace: true,
+    });
+    expect(kept.map((r) => r.tenantId)).toEqual(["team-root", "workbench-a"]);
+  });
+
+  test("empty team-space parent is still dropped as a duplicate of All workbenches", () => {
+    const rows = [
+      {
+        tenantId: "team-root",
+        turns: 0,
+        tokens: {
+          input: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 0,
+          thinking: 0,
+          total: 0,
+        },
+        costUsd: 0,
+      },
+      {
+        tenantId: "workbench-a",
+        turns: 2,
+        tokens: {
+          input: 10,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 5,
+          thinking: 0,
+          total: 15,
+        },
+        costUsd: null,
+      },
+    ];
+    const kept = teamSpaceWorkbenchRows(rows, {
+      tenantId: "team-root",
+      isTeamSpace: true,
+    });
+    expect(kept.map((r) => r.tenantId)).toEqual(["workbench-a"]);
   });
 });

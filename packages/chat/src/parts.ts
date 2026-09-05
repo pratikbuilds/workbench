@@ -15,10 +15,10 @@ export const TextPart = type({
    * other text part. */
   "turnFailed?": "boolean",
   /** Set with `turnFailed` when the cause is a missing/unresolvable
-   * model (`InferenceResolutionError`) — the failed-turn strip renders
-   * named recovery (picker + Settings hop) instead of Retry. Absent on
-   * every other text part. */
-  "turnFailedReason?": "'model_unavailable'",
+   * model (`InferenceResolutionError`) or a model that cannot use tools
+   * — the failed-turn strip renders named recovery (picker + Settings
+   * hop) instead of Retry. Absent on every other text part. */
+  "turnFailedReason?": "'model_unavailable' | 'tools_unsupported'",
   /** Set only on the cancelled-turn notice `postCancelledNotice`
    * (`./workbench-service.ts`) posts in the cancelled agent's own voice
    * (CL-7201) — distinct from `turnFailed`: a user cancelling a turn is

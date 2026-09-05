@@ -100,6 +100,13 @@ const COMBINED_COMPILER_OPTIONS = {
   declaration: false,
   declarationMap: false,
   emitDeclarationOnly: false,
+  // Left unset, `extends` inherits tsBuildInfoFile: "dist/tsconfig.tsbuildinfo"
+  // from tsconfig.src.json, so the combined project's --noEmit check and the
+  // composite build write the same file and each invalidates the other's
+  // incremental state. Giving the combined project its own path (next to
+  // this tsconfig.json, since there's no outDir here to nest it under)
+  // keeps the two builds independent.
+  tsBuildInfoFile: "tsconfig.tsbuildinfo",
 };
 
 /**

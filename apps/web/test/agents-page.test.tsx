@@ -20,10 +20,11 @@ import {
 import type { AgentDefinitionWithDisplayName } from "../src/agents-directory";
 import type { AgentInstance } from "../src/agents-api";
 
-// `name` is the immutable kebab identifier; `displayName` is what
-// `withDisplayNames` (CL-6413) derives from the definition's description
-// (or, absent one, a humanized reading of `name`) — the page renders both,
-// never the slug alone.
+// `name` is the immutable kebab identifier (the URL slug); `displayName` is
+// what `withDisplayNames` (CL-6413) derives from the definition's
+// description (or, absent one, a humanized reading of `name`). The roster
+// name slot is displayName only (CL-6748) — the slug stays the URL, not a
+// second line under the name.
 const triage: AgentDefinitionWithDisplayName = {
   id: "wfd_1",
   tenantId: "tnt_1",
@@ -108,28 +109,99 @@ describe("runsInLast7Days", () => {
 describe("agentModelSettledContent (CL-6848)", () => {
   test("a fetch failure is an error, never the same label as an unset model", () => {
     expect(
-      agentModelSettledContent({
-        status: "error",
-        message: "Something went wrong loading this agent's model. Try again.",
-      }),
+      agentModelSettledContent(
+        {
+          status: "error",
+          message:
+            "Something went wrong loading this agent's model. Try again.",
+        },
+        [],
+      ),
     ).toEqual({
       kind: "error",
       message: "Something went wrong loading this agent's model. Try again.",
     });
     expect(
-      agentModelSettledContent({
-        status: "ready",
-        data: { name: "triage-bot" },
-      }),
+      agentModelSettledContent(
+        {
+          status: "ready",
+          data: { name: "triage-bot" },
+        },
+        [],
+      ),
     ).toEqual({ kind: "model", label: "Default" });
   });
 
-  test("a ready model name passes through", () => {
+  test("an unset model stays Default even when the catalog has a tenant default", () => {
     expect(
-      agentModelSettledContent({
-        status: "ready",
-        data: { name: "triage-bot", model: "claude-sonnet-4" },
-      }),
+      agentModelSettledContent(
+        {
+          status: "ready",
+          data: { name: "triage-bot" },
+        },
+        [{ canonicalName: "claude-sonnet-4", displayName: "Claude Sonnet 4" }],
+      ),
+    ).toEqual({ kind: "model", label: "Default" });
+  });
+
+  test("an unset model stays Default when the catalog winner changes (CL-6782)", () => {
+    const unset = {
+      status: "ready" as const,
+      data: { name: "triage-bot" },
+    };
+    expect(
+      agentModelSettledContent(unset, [
+        { canonicalName: "claude-sonnet-4", displayName: "Claude Sonnet 4" },
+      ]),
+    ).toEqual({ kind: "model", label: "Default" });
+    expect(
+      agentModelSettledContent(unset, [
+        { canonicalName: "claude-haiku-5", displayName: "Claude Haiku 5" },
+        { canonicalName: "claude-sonnet-4", displayName: "Claude Sonnet 4" },
+      ]),
+    ).toEqual({ kind: "model", label: "Default" });
+  });
+
+  test("a stored model is unchanged when the catalog default becomes a different winner (CL-6782)", () => {
+    const stored = {
+      status: "ready" as const,
+      data: { name: "triage-bot", model: "claude-sonnet-4" },
+    };
+    expect(
+      agentModelSettledContent(stored, [
+        { canonicalName: "claude-sonnet-4", displayName: "Claude Sonnet 4" },
+        { canonicalName: "claude-haiku-5", displayName: "Claude Haiku 5" },
+      ]),
+    ).toEqual({ kind: "model", label: "Claude Sonnet 4" });
+    expect(
+      agentModelSettledContent(stored, [
+        { canonicalName: "claude-haiku-5", displayName: "Claude Haiku 5" },
+        { canonicalName: "claude-sonnet-4", displayName: "Claude Sonnet 4" },
+      ]),
+    ).toEqual({ kind: "model", label: "Claude Sonnet 4" });
+  });
+
+  test("a ready model maps to the catalog displayName, not the raw id", () => {
+    expect(
+      agentModelSettledContent(
+        {
+          status: "ready",
+          data: { name: "triage-bot", model: "claude-sonnet-4" },
+        },
+        [{ canonicalName: "claude-sonnet-4", displayName: "Claude Sonnet 4" }],
+      ),
+    ).toEqual({ kind: "model", label: "Claude Sonnet 4" });
+  });
+
+  test("a canonical with no catalog displayName is shown as-is, never an invented name", () => {
+    expect(
+      agentModelSettledContent(
+        {
+          status: "ready",
+          data: { name: "triage-bot", model: "claude-sonnet-4" },
+        },
+        [],
+      ),
     ).toEqual({ kind: "model", label: "claude-sonnet-4" });
   });
 });
@@ -143,6 +215,7 @@ describe("AgentModelCellView (CL-6848)", () => {
           message:
             "Something went wrong loading this agent's model. Try again.",
         }}
+        catalog={[]}
       />,
     );
     const unsetMarkup = renderToStaticMarkup(
@@ -151,6 +224,7 @@ describe("AgentModelCellView (CL-6848)", () => {
           status: "ready",
           data: { name: "triage-bot" },
         }}
+        catalog={[]}
       />,
     );
     expect(errorMarkup).toContain("text-destructive");
@@ -163,6 +237,23 @@ describe("AgentModelCellView (CL-6848)", () => {
     // The muted em-dash is the absent-value glyph elsewhere on the page —
     // a fetch failure must not reuse it.
     expect(errorMarkup).not.toContain(">—<");
+  });
+
+  test("a ready model renders the catalog displayName, not a monospaced id", () => {
+    const markup = renderToStaticMarkup(
+      <AgentModelCellView
+        state={{
+          status: "ready",
+          data: { name: "triage-bot", model: "claude-sonnet-4" },
+        }}
+        catalog={[
+          { canonicalName: "claude-sonnet-4", displayName: "Claude Sonnet 4" },
+        ]}
+      />,
+    );
+    expect(markup).toContain("Claude Sonnet 4");
+    expect(markup).not.toContain("claude-sonnet-4");
+    expect(markup).not.toContain("font-mono");
   });
 });
 
@@ -276,7 +367,7 @@ describe("AgentsPage", () => {
     expect(markup).toContain("No agents yet");
   });
 
-  test("renders one row per definition with its status, name, and slug", () => {
+  test("renders one row per definition with its display name and Live status, not the slug", () => {
     const markup = renderToStaticMarkup(
       <AgentsPage
         tenantId="tnt_1"
@@ -293,15 +384,18 @@ describe("AgentsPage", () => {
       />,
     );
     expect(markup).toContain("Triage bot");
-    expect(markup).toContain("triage-bot");
+    expect(markup).not.toContain("triage-bot");
     expect(markup).toContain("Sorts inbound issues.");
-    expect(markup).toContain("Running");
-    // Running carries the live dot (react-ui's StatusDot, `live` prop) —
+    expect(markup).toContain("Live");
+    expect(markup).not.toContain("Running");
+    // Live carries the live dot (react-ui's StatusDot, `live` prop) —
     // the spec's liveness marker for an actively-running agent.
     expect(markup).toContain('aria-label="Live"');
+    // Badge must not shout via CSS uppercase (same as CL-6747 skills).
+    expect(markup).toContain("normal-case");
   });
 
-  test("renders a humanized display name for a definition with no description, alongside its slug", () => {
+  test("renders a humanized display name for a definition with no description, not its slug", () => {
     const undescribed: AgentDefinitionWithDisplayName = {
       ...triage,
       id: "wfd_undescribed",
@@ -325,7 +419,7 @@ describe("AgentsPage", () => {
       />,
     );
     expect(markup).toContain("Research Analyst");
-    expect(markup).toContain("research-analyst");
+    expect(markup).not.toContain("research-analyst");
   });
 
   test("selecting a definition links each workbench instance to its own settings Agents tab", () => {
@@ -381,6 +475,10 @@ describe("AgentsPage", () => {
     );
     expect(markup).toContain('href="/agents/triage-bot"');
     expect(markup).toContain("Open");
+    expect(markup).toContain("Deployed");
+    expect(markup).not.toContain(">deployed<");
+    expect(markup).not.toContain(">DEPLOYED<");
+    expect(markup).toContain("normal-case");
   });
 
   test("offers New agent as the top-bar create action, per the top-nav page-action contract", () => {

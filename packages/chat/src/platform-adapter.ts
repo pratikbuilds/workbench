@@ -14,7 +14,7 @@ import {
 } from "@corbits/agent-lifecycle";
 import {
   authoredDefinitionCandidates,
-  createCryptoProviderCache,
+  type CryptoProviderCache,
   DefinitionProjectionMissingError,
   domainOf,
   inferenceSourcesDigest,
@@ -27,6 +27,7 @@ import {
   resolveNewestProjectedDefinition,
   sendFoldedMail,
   wakeFoldedRun,
+  tagCredentialCipher,
   type FoldedRunMode,
   type FoldedRunsDeps,
   type SendFoldedMailParams,
@@ -62,7 +63,7 @@ import { withTimeout } from "./with-timeout";
 import { wrapWakeInferenceError } from "./model-unavailable";
 import type { EventCollectorRegistry, SidecarRouter } from "@intx/hub-sessions";
 import type { InferencePreference } from "@intx/agent";
-import { formatRunAddress } from "@intx/types";
+import { formatRunAddress, type CredentialCipher } from "@intx/types";
 import type { FoldedBody } from "@intx/workflow-deploy";
 import {
   AgentUnreachableError,
@@ -87,13 +88,11 @@ export type CreateHubChatPlatformDeps = {
   /**
    * Decrypts credential secrets when an invited agent's launch resolves
    * inference sources against the tenant catalog — see
-   * `@corbits/folded-runs`' `FoldedRunsDeps.credentialCipher`; every
-   * invited-agent launch and wake needs it.
-   * Omitted, `resolveDefinitionSources` falls back to a noop cipher and
-   * hands the raw stored secret to the provider unchanged — correct only
-   * when the credential was itself written unencrypted.
+   * `@corbits/folded-runs`' `FoldedRunsDeps.credentialCipher`. Tagged at
+   * construction: missing or wrong-shape input fails closed and the
+   * platform is not minted.
    */
-  credentialCipher?: FoldedRunsDeps["credentialCipher"];
+  credentialCipher: CredentialCipher;
   /**
    * Every caller of `createHubChatPlatform` builds this via
    * `createEventCollectorRegistry` and passes it through — without it,
@@ -102,6 +101,15 @@ export type CreateHubChatPlatformDeps = {
    * the lifecycle construction below) has no signal at all.
    */
   eventCollectors: EventCollectorRegistry;
+  /**
+   * Signing-key cache for outbound folded mail. The host constructs one
+   * process-wide instance (CL-7284) and passes it here so a workbench id
+   * looked up from chat cannot mint a different key than the same id
+   * looked up from webhook, routine, or one-shot drafting mail. This
+   * adapter keys `get` by `workbenchId` (`generateId("workflowRun")`, or
+   * older `generateId("instance")`).
+   */
+  cryptoProviders: CryptoProviderCache;
   /**
    * Opt-in idle-sleep for every launched instance: absent here, the adapter keeps today's
    * behavior exactly (nothing ever sleeps, no interval runs). When
@@ -223,12 +231,15 @@ export type HubChatPlatform = ChatPlatform & {
 
 /**
  * Composes the `ChatPlatform` port over the hub's real session
- * services and `@corbits/folded-runs`. One crypto provider is minted
- * per workbench and cached for the adapter's lifetime.
+ * services and `@corbits/folded-runs`. Outbound mail is signed with
+ * a `CryptoProvider` from `deps.cryptoProviders`, keyed by workbench
+ * id — the host owns the cache so every mail sender in the process
+ * shares it.
  */
 export function createHubChatPlatform(
   deps: CreateHubChatPlatformDeps,
 ): HubChatPlatform {
+  const credentialCipher = tagCredentialCipher(deps.credentialCipher);
   const foldedRunsDeps: FoldedRunsDeps = {
     db: deps.db,
     sessionService: deps.sessionService,
@@ -236,9 +247,7 @@ export function createHubChatPlatform(
     sidecarRouter: deps.sidecarRouter,
     eventCollectors: deps.eventCollectors,
     toolGrantsForPins: deps.toolGrantsForPins,
-    ...(deps.credentialCipher !== undefined
-      ? { credentialCipher: deps.credentialCipher }
-      : {}),
+    credentialCipher,
     ...(deps.mcpCredentialBindingsFor !== undefined
       ? { mcpCredentialBindingsFor: deps.mcpCredentialBindingsFor }
       : {}),
@@ -250,7 +259,7 @@ export function createHubChatPlatform(
       : {}),
   };
 
-  const cryptoProviders = createCryptoProviderCache();
+  const cryptoProviders = deps.cryptoProviders;
   const wakeLogger = getLogger(["chat", "wake"]);
 
   // Built from `@corbits/agent-lifecycle` — the idle-sleep sweep and
@@ -1228,6 +1237,10 @@ export function createHubChatPlatform(
           "sendMail requires either principalId or fromWorkbenchId",
         );
       }
+      // Keyed by workbench id (`generateId("workflowRun")` / older
+      // `generateId("instance")`), not the invited agent's instance id.
+      // Those two id families share a prefix, so a second cache in this
+      // process would mint a different signing key for the same string.
       const cryptoProvider = await cryptoProviders.get(input.workbenchId);
 
       const attachments = input.content.attachments?.map(
@@ -1246,19 +1259,33 @@ export function createHubChatPlatform(
         domain,
         content: input.content.content,
         cryptoProvider,
-        ...(input.correlationId !== undefined
-          ? { correlationId: input.correlationId }
-          : {}),
       };
       const withAttachments =
         attachments !== undefined
           ? { ...sendMailBase, attachments }
           : sendMailBase;
-      const sent = await sendFoldedMailWithReclaimRetry(
+      const withReplyTo =
         input.content.replyTo !== undefined
           ? { ...withAttachments, replyTo: input.content.replyTo }
-          : withAttachments,
-      );
+          : withAttachments;
+      // RFC 5322 threading, straight from the timeline row this mail
+      // carries (CL-7450): its own `Message-ID`, and the parentage a
+      // reply correlates back through. `replyTo` above is the unrelated
+      // mention-fan-out room hint `chat-orchestrator.ts` reads back off
+      // the event — both can be present on the same mail.
+      const withThreading = {
+        ...withReplyTo,
+        ...(input.content.messageId !== undefined
+          ? { messageId: input.content.messageId }
+          : {}),
+        ...(input.content.inReplyTo !== undefined
+          ? { inReplyTo: input.content.inReplyTo }
+          : {}),
+        ...(input.content.references !== undefined
+          ? { references: input.content.references }
+          : {}),
+      };
+      const sent = await sendFoldedMailWithReclaimRetry(withThreading);
 
       lifecycle?.recordActivity(deliveryAddress);
 

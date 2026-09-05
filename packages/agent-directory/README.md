@@ -7,6 +7,45 @@ and the hub routes that create a definition and manage its attached skills
 (`routes.ts`) — server-side, backed by `@intx/agent`, `@intx/workflow`,
 `@intx/hub-sessions`, and Postgres via `@intx/db`.
 
+## Runtime tool-package pins are always versioned
+
+Every pin this package writes onto a definition (`create_agent`'s
+`toolPackagePins`, guided capability-add's `POST /:definitionId/capabilities`)
+resolves to a concrete, published version — never the npm "any version"
+range `*`, and never a range or tag like `latest`, `^1`, `~1.2`, `>=1.0.0`,
+or `1.x`; `NonWildcardToolPackagePin` (`src/agent-workflow.ts`) requires
+`semver.valid`, an exact version. `resolvePinnedVersion` (and
+`createPinnedVersionResolver`, `src/tool-package-version.ts`) resolves a bare
+package name to `{ name, version }` by reading the tenant's (possibly
+inherited) `corbits-tools` `package-registry` asset and picking the highest
+version among its tarballs — preferring a stable version over a
+higher-sorting prerelease; a prerelease only wins when the registry carries
+no stable version for that package at all. Resolution throws the same
+`CapabilityOutOfInventoryError` guided capability-add's inventory check
+throws when the registry or the package is absent, so every caller's
+existing 4xx mapping covers it with no new wiring. `create_agent`'s own
+multi-pin create shares one `createPinnedVersionResolver` across every named
+pin, so a five-pin create still costs one registry lookup and one tarball
+listing, not five.
+
+This matters because a `*` (or any non-exact) pin would let a later tarball
+landing in the registry silently change what an already-deployed specialist
+runs, with no record of the change (CL-7389). Resolving a version only
+happens when a pin is newly added or a definition is newly created with
+named pins:
+
+- A plain redeploy of an existing definition (`PUT /:definitionId`) never
+  touches tool-package pins at all, let alone re-resolves one — it keeps
+  whatever version its existing pins already carry, even after a newer
+  tarball lands in the registry.
+- Guided capability-add re-adding a package **already pinned** on the
+  definition also keeps its existing stored version rather than
+  re-resolving — re-adding is a no-op on the version, never a silent bump
+  to whatever the registry's newest tarball happens to be today. Only a
+  name with no existing pin resolves fresh against the registry. Bumping an
+  existing pin to a newer published version is a distinct, explicit action
+  this package does not yet expose.
+
 ## `/client` subpath contract
 
 `@corbits/agent-directory/client` (`src/client.ts`) is the browser-safe

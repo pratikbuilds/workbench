@@ -1,15 +1,13 @@
-// The Granola webhook card's seam to two already-shipped route sets:
-// `@corbits/webhook-triggers`' management routes (mint/rotate a signed
-// inbound address) and `@corbits/routines`' routes (bind that address to
-// a routine's trigger). Nothing here adds a route — both listings, create,
-// rotate, and the routine PATCH already exist; this module only shapes
-// the fetch calls, `connections-api.ts`-style: same wrapper, same error
-// class convention, arktype at the trust boundary.
+// The Granola webhook card's seam to `@corbits/webhook-triggers`'
+// management routes (mint/rotate a signed inbound address). Nothing here
+// adds a route — listings, create, and rotate already exist; this module
+// only shapes the fetch calls, `connections-api.ts`-style: same wrapper,
+// same error class convention, arktype at the trust boundary.
 //
-// `packages/settings-ui` never imports `apps/web/src/routines-api.ts` or
-// `webhook-triggers-api.ts` — apps depend on packages, never the reverse —
-// so this duplicates the same thin-client shape those two already use,
-// trimmed to only the fields the Granola card reads.
+// `packages/settings-ui` never imports `apps/web/src/webhook-triggers-api.ts`
+// — apps depend on packages, never the reverse — so this duplicates the
+// same thin-client shape that module already uses, trimmed to only the
+// fields the Granola card reads.
 //
 // A webhook trigger's secret is never stored beyond the component state
 // that shows it once: the hub returns it only on create or rotate, never
@@ -66,7 +64,7 @@ export function listGranolaWebhookTriggers(
   ).then((page) => page.items);
 }
 
-/** Default input mapping — a routine's webhook binding sends a fixed
+/** Default input mapping — a webhook trigger sends a fixed
  * message rather than an editable template; see
  * `packages/webhook-triggers/src/mapping.ts` and
  * `apps/web/src/webhook-triggers-api.ts`'s identical constant. */
@@ -125,69 +123,6 @@ export function sampleGranolaWebhookPayload(): string {
   );
 }
 
-const GranolaRoutineTrigger = type({
-  kind: "'interval'",
-  unit: "'minutes' | 'hours'",
-  every: "number.integer > 0",
-})
-  .or({
-    kind: "'daily'",
-    hour: "0 <= number.integer <= 23",
-    minute: "0 <= number.integer <= 59",
-    "timezone?": "string",
-  })
-  .or({
-    kind: "'weekly'",
-    dayOfWeek: "0 <= number.integer <= 6",
-    hour: "0 <= number.integer <= 23",
-    minute: "0 <= number.integer <= 59",
-    "timezone?": "string",
-  })
-  .or({ kind: "'cron'", expression: "string", "timezone?": "string" })
-  .or({ kind: "'webhook'", webhookTriggerId: "string" })
-  .or("null");
-export type GranolaRoutineTrigger = typeof GranolaRoutineTrigger.infer;
-
-export const GranolaRoutine = type({
-  id: "string",
-  name: "string",
-  definitionId: "string",
-  trigger: GranolaRoutineTrigger,
-});
-export type GranolaRoutine = typeof GranolaRoutine.infer;
-
-/** Every routine on the tenant — the Granola webhook card filters this
- * down to routines bound to a Granola-automatable workflow definition
- * itself (see `granola-webhook-card.tsx`), rather than this module
- * guessing at "Granola-ish" here. */
-export function listGranolaRoutines(
-  tenantId: string,
-): Promise<readonly GranolaRoutine[]> {
-  return request(
-    `/api/tenants/${tenantId}/routines`,
-    type({ items: GranolaRoutine.array() }),
-    "loading routines",
-  ).then((page) => page.items);
-}
-
-export function bindRoutineWebhookTrigger(
-  tenantId: string,
-  routineId: string,
-  webhookTriggerId: string,
-): Promise<void> {
-  return request(
-    `/api/tenants/${tenantId}/routines/${routineId}`,
-    type("unknown"),
-    "binding that webhook",
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        trigger: { kind: "webhook", webhookTriggerId },
-      }),
-    },
-  ).then(() => undefined);
-}
-
 const WorkflowDefinitionSummary = type({
   id: "string",
   name: "string",
@@ -211,10 +146,8 @@ const PAGE_LIMIT = 100;
 /**
  * Every workflow definition on the tenant, walking pagination, reduced to
  * `{id, name}` — enough to find which definition id(s) belong to the
- * `granola-call` asset. Mirrors
- * `apps/web/src/routines-api.ts:listAllRoutineTargets`'s pagination walk
- * over the platform's raw definitions listing, without that endpoint's
- * routine-target filtering, which the card doesn't need.
+ * `granola-call` asset. Walks the platform's raw definitions listing
+ * without extra filtering, which the card doesn't need.
  */
 export async function listGranolaWorkflowDefinitions(
   tenantId: string,

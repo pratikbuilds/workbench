@@ -7,6 +7,7 @@ import { expect, test } from "bun:test";
 import type { StepPrimitive, WorkflowDefinition } from "@intx/workflow";
 
 import {
+  WORKBENCH_DIGEST_SCHEDULE_CRON,
   WORKBENCH_DIGEST_STEP_ID,
   WORKBENCH_DIGEST_SYSTEM_PROMPT,
   WORKBENCH_DIGEST_WORKFLOW_ID,
@@ -15,7 +16,6 @@ import {
 } from "../src/index";
 
 const INPUT = {
-  triggerAddress: "ch_dep000000000000@example.test",
   inferencePreferences: [{ provider: "anthropic", model: "claude-test" }],
   turnTimeoutMs: 60000,
 } as const;
@@ -41,12 +41,13 @@ test("the step carries an explicit per-turn timeout", () => {
   expect(digestStep(definition).timeout).toBe(INPUT.turnTimeoutMs);
 });
 
-test("the workflow is triggered by mail to the given deployment address", () => {
+test("the workflow is triggered on the daily 09:00 UTC schedule", () => {
   const definition = buildWorkbenchDigestWorkflow(INPUT);
   expect(definition.id).toBe(WORKBENCH_DIGEST_WORKFLOW_ID);
   expect(definition.triggers).toEqual([
-    { type: "mail", to: INPUT.triggerAddress },
+    { type: "schedule", cron: "0 9 * * *" },
   ]);
+  expect(WORKBENCH_DIGEST_SCHEDULE_CRON).toBe("0 9 * * *");
 });
 
 test("the agent instructs relaying the exact summary line, carries the preferences, and inlines no tools", () => {
@@ -89,12 +90,6 @@ test("serialization fails loud on a function-valued field, naming its path", () 
   expect(() => serializeWorkbenchDigestWorkflow(poisoned)).toThrow(
     /steps\.workbench-digest\.agent\.toolFactories\[0\]/,
   );
-});
-
-test("an empty trigger address is rejected", () => {
-  expect(() =>
-    buildWorkbenchDigestWorkflow({ ...INPUT, triggerAddress: "" }),
-  ).toThrow(/triggerAddress/);
 });
 
 test("a non-positive or fractional turn timeout is rejected", () => {

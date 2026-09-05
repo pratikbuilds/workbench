@@ -8,7 +8,7 @@
 // Workflow package metadata (automatable, displayName) lives in each
 // workflows/*/package.json under `corbits.workflow` and is mirrored in
 // `@workbench/templates`. Seed stamps displayName onto the asset so
-// the routines picker can show a friendly label without reading package.json.
+// the scheduled-workflow picker can show a friendly label without reading package.json.
 
 import {
   AssetResponse,
@@ -20,14 +20,20 @@ import {
   ModelResponse,
   ProviderResponse,
   WorkflowRunHealth,
+  WorkflowDefinitionResponse,
   paginatedSchema,
   Capability,
 } from "@intx/types";
 import { type } from "arktype";
+import type { InferencePreference } from "@intx/agent";
 import {
   buildAssistantWorkflow,
   serializeAssistantWorkflow,
 } from "@corbits/assistant-workflow";
+import {
+  buildCodeReviewWorkflow,
+  serializeCodeReviewWorkflow,
+} from "@corbits/code-review-workflow";
 import {
   buildWorkbenchDigestWorkflow,
   serializeWorkbenchDigestWorkflow,
@@ -44,6 +50,42 @@ import {
   buildLast30DaysResearchWorkflow,
   serializeLast30DaysResearchWorkflow,
 } from "@corbits/last-30-days-research-workflow";
+import {
+  buildGranolaCallWorkflow,
+  serializeGranolaCallWorkflow,
+} from "@corbits/granola-call-workflow";
+import {
+  buildMorningBriefWorkflow,
+  serializeMorningBriefWorkflow,
+} from "@corbits/morning-brief-workflow";
+import {
+  buildExaTopicWatchWorkflow,
+  serializeExaTopicWatchWorkflow,
+} from "@corbits/exa-topic-watch-workflow";
+import {
+  buildProcessGranolaCallWorkflow,
+  serializeProcessGranolaCallWorkflow,
+} from "@corbits/process-granola-call-workflow";
+import {
+  buildAttioTaskAgentWorkflow,
+  serializeAttioTaskAgentWorkflow,
+} from "@corbits/attio-task-agent-workflow";
+import {
+  buildPainPointCollateralWorkflow,
+  serializePainPointCollateralWorkflow,
+} from "@corbits/pain-point-collateral-workflow";
+import {
+  buildRedditOpportunityScannerWorkflow,
+  serializeRedditOpportunityScannerWorkflow,
+} from "@corbits/reddit-opportunity-scanner-workflow";
+import {
+  buildCollateralGenerationWorkflow,
+  serializeCollateralGenerationWorkflow,
+} from "@corbits/collateral-generation-workflow";
+import {
+  buildDiligenceBriefWorkflow,
+  serializeDiligenceBriefWorkflow,
+} from "@corbits/diligence-brief-workflow";
 import { WORKFLOW_CATALOG } from "@workbench/templates";
 import { capabilitiesForDeployment } from "@corbits/inference-catalog/offering-capabilities";
 import { quirksForDeployment } from "@corbits/inference-catalog/ollama-context-defaults";
@@ -56,7 +98,6 @@ import {
   type ApiCall,
 } from "@corbits/hub-api-client";
 import { DEFAULT_SKILLS } from "./default-skills";
-import { ensureDefaultRoutines } from "./default-routines";
 import { CATALOG_SEEDS, type CatalogModelSpec } from "./catalog-seed-data";
 import {
   fetchOllamaModelCatalog,
@@ -79,6 +120,24 @@ const WORKBENCH_DIGEST_TURN_TIMEOUT_MS = 30 * 1000;
 // other conversational workflows above, not the short catalog-test
 // budget.
 const LAST_30_DAYS_RESEARCH_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+// Matches the conversational default every folded builder in this
+// codebase uses: a review turn reads a diff and posts one review, the
+// same order of work as a research or assistant turn.
+const CODE_REVIEW_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+// Same conversational default as the entries above: one mail-triggered
+// reasoning turn per run, no multi-step DAG.
+const GRANOLA_CALL_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+const MORNING_BRIEF_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+const EXA_TOPIC_WATCH_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+// A transcript-plus-extraction-plus-verification pass over a long call
+// can run well past the shortest steps in the catalog (see the
+// workflow's own README), so this gets extra headroom.
+const PROCESS_GRANOLA_CALL_TURN_TIMEOUT_MS = 5 * 60 * 1000;
+const ATTIO_TASK_AGENT_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+const PAIN_POINT_COLLATERAL_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+const REDDIT_OPPORTUNITY_SCANNER_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+const COLLATERAL_GENERATION_TURN_TIMEOUT_MS = 2 * 60 * 1000;
+const DILIGENCE_BRIEF_TURN_TIMEOUT_MS = 2 * 60 * 1000;
 const RUN_START_TIMEOUT_MS = 30_000;
 const RUN_POLL_INTERVAL_MS = 1000;
 
@@ -177,7 +236,20 @@ export type DefaultWorkflow = {
    * (schedulable automation). Conversational agents stay false.
    */
   automatable: boolean;
-  buildJson: (tenantDomain: string, model: ModelSource) => string;
+  /**
+   * Renders the definition's JSON given the tenant's mail domain and the
+   * ordered provider/model preferences to deploy against. Takes the bare
+   * preference list — never a full `ModelSource` — so this same
+   * function serves both `seedTenant`'s HTTP-deploy path (which also
+   * needs a `ModelSource`'s `baseURL`/`apiKey` for the deployment's
+   * `sources`, resolved separately) and a native in-process deploy path
+   * (`apps/hub/src/templates/block-workflows.ts`) that only ever has the
+   * tenant's real, possibly multi-entry inference preferences on hand.
+   */
+  buildJson: (
+    tenantDomain: string,
+    inferencePreferences: readonly InferencePreference[],
+  ) => string;
   /**
    * Overrides the deploy's inference source for this workflow only,
    * given the hub's own base URL. Present on the catalog-test workflow
@@ -188,6 +260,12 @@ export type DefaultWorkflow = {
    * model.
    */
   modelSource?: (hubUrl: string) => ModelSource;
+  /**
+   * When true, PUT the authored definition to `stopped` after deploy so
+   * a native ScheduleTrigger does not fire every tenant at the next
+   * matching minute. Absent means leave the schema default (`deployed`).
+   */
+  startStopped?: true;
 };
 
 function catalogDisplayName(assetName: string): string {
@@ -215,13 +293,19 @@ export const SETUP_AGENT_ASSET_NAME = "assistant";
 
 /**
  * The workflow set every real tenant starts with: the general-purpose
- * assistant, the echo walking-skeleton, and the workbench-digest
- * automation the Routines picker can honestly offer. This is what
+ * assistant, and nothing else (CL-7074). This is what
  * `provisionPersonalTenantIfNeeded` (`@workbench/onboarding`) deploys
  * on first login for every real user — growing it is adding an entry
  * here, nothing more, but an entry here reaches every signup, so it is
- * never the place for a workflow that exists only to exercise the
- * platform itself. See `CATALOG_TEST_WORKFLOWS` for those.
+ * never the place for a workflow that is not something every person
+ * needs the moment they land. `echo`, `workbench-digest`, and
+ * `last-30-days-research` used to live here; a signup paid a git push
+ * and a sidecar probe for each of them even though nobody asked for
+ * them. They now live in `CATALOG_WORKFLOWS`, deployable through the
+ * catalog instantiate route (CL-7073) rather than seeded onto every
+ * bench. See `CATALOG_TEST_WORKFLOWS`
+ * for the platform-exercise set, which never reaches a real signup at
+ * all.
  *
  * Order is a product decision, not a formality (CL-6462): `seedTenant`
  * deploys this array in sequence at roughly 20s each, and the setup
@@ -229,38 +313,44 @@ export const SETUP_AGENT_ASSET_NAME = "assistant";
  * It goes first so a fresh signup lands in a working conversation in
  * seconds while the rest converge behind them; a signup that waited on
  * the whole set stared at a progress screen for minutes.
- *
- * workbench-digest is the seed automation: schedulable, not a chat host,
- * friendly display name. It uses the tenant's real model so a scheduled
- * run can produce a real digest line.
  */
 export const DEFAULT_WORKFLOWS: readonly DefaultWorkflow[] = [
   {
     assetName: SETUP_AGENT_ASSET_NAME,
     displayName: catalogDisplayName(SETUP_AGENT_ASSET_NAME),
     automatable: catalogAutomatable(SETUP_AGENT_ASSET_NAME),
-    buildJson: (tenantDomain, model) =>
+    buildJson: (tenantDomain, inferencePreferences) =>
       serializeAssistantWorkflow(
         buildAssistantWorkflow({
           triggerAddress: `${SETUP_AGENT_ASSET_NAME}@${tenantDomain}`,
-          inferencePreferences: [
-            { provider: model.provider, model: model.model },
-          ],
+          inferencePreferences,
           turnTimeoutMs: ASSISTANT_TURN_TIMEOUT_MS,
         }),
       ),
   },
+];
+
+/**
+ * Workflows every real tenant CAN have, but none is deployed by default
+ * (CL-7074) — a caller deploys one on demand the same way `seedTenant`
+ * deploys any `DefaultWorkflow`: `ensureWorkflowAsset` →
+ * `pushWorkflow` → `ensureDeployment`. `CL-7073` is the caller that
+ * offers these from a catalog/instantiate surface; nothing here reaches
+ * a bench until something asks for it by name. An asset already
+ * deployed on an existing bench (a prior seed run, before these moved
+ * out of `DEFAULT_WORKFLOWS`) is untouched — there is no orphan-retire
+ * for these entries, on purpose (see `docs/seed-reconciliation.md`).
+ */
+export const CATALOG_WORKFLOWS: readonly DefaultWorkflow[] = [
   {
     assetName: "echo",
     displayName: catalogDisplayName("echo"),
     automatable: catalogAutomatable("echo"),
-    buildJson: (tenantDomain, model) =>
+    buildJson: (tenantDomain, inferencePreferences) =>
       serializeEchoWorkflow(
         buildEchoWorkflow({
           triggerAddress: `echo@${tenantDomain}`,
-          inferencePreferences: [
-            { provider: model.provider, model: model.model },
-          ],
+          inferencePreferences,
           turnTimeoutMs: ECHO_TURN_TIMEOUT_MS,
         }),
       ),
@@ -269,33 +359,164 @@ export const DEFAULT_WORKFLOWS: readonly DefaultWorkflow[] = [
     assetName: "workbench-digest",
     displayName: catalogDisplayName("workbench-digest"),
     automatable: catalogAutomatable("workbench-digest"),
-    buildJson: (tenantDomain, model) =>
+    buildJson: (_tenantDomain, inferencePreferences) =>
       serializeWorkbenchDigestWorkflow(
         buildWorkbenchDigestWorkflow({
-          triggerAddress: `workbench-digest@${tenantDomain}`,
-          inferencePreferences: [
-            { provider: model.provider, model: model.model },
-          ],
+          inferencePreferences,
           turnTimeoutMs: WORKBENCH_DIGEST_TURN_TIMEOUT_MS,
         }),
       ),
+    startStopped: true,
   },
   {
     assetName: "last-30-days-research",
     displayName: catalogDisplayName("last-30-days-research"),
     automatable: catalogAutomatable("last-30-days-research"),
-    // CL-6201: deployed so `ensureDefaultRoutines` (default-routines.ts)
-    // has a real definition to un-strand into a routine row. It was
-    // never in this array before that ticket, which is exactly why the
-    // routine could never appear: nothing deployed its definition.
-    buildJson: (tenantDomain, model) =>
+    // Deployed automation, on demand. Seed never POSTs a wrapper row;
+    // last-30-days-research stays a deployed workflow without a native
+    // ScheduleTrigger.
+    buildJson: (tenantDomain, inferencePreferences) =>
       serializeLast30DaysResearchWorkflow(
         buildLast30DaysResearchWorkflow({
           triggerAddress: `last-30-days-research@${tenantDomain}`,
-          inferencePreferences: [
-            { provider: model.provider, model: model.model },
-          ],
+          inferencePreferences,
           turnTimeoutMs: LAST_30_DAYS_RESEARCH_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "code-review",
+    displayName: catalogDisplayName("code-review"),
+    automatable: catalogAutomatable("code-review"),
+    // Deployed automation, on demand, same as every other entry here
+    // (CL-7073): the instantiate route used to build this one definition
+    // through its own hardcoded copy in
+    // `apps/hub/src/templates/block-workflows.ts`; that copy is gone and
+    // this entry is now the one source of truth for it, same as every
+    // other catalog workflow.
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeCodeReviewWorkflow(
+        buildCodeReviewWorkflow({
+          triggerAddress: `code-review@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: CODE_REVIEW_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "granola-call",
+    displayName: catalogDisplayName("granola-call"),
+    automatable: catalogAutomatable("granola-call"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeGranolaCallWorkflow(
+        buildGranolaCallWorkflow({
+          triggerAddress: `granola-call@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: GRANOLA_CALL_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "morning-brief",
+    displayName: catalogDisplayName("morning-brief"),
+    automatable: catalogAutomatable("morning-brief"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeMorningBriefWorkflow(
+        buildMorningBriefWorkflow({
+          triggerAddress: `morning-brief@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: MORNING_BRIEF_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "exa-topic-watch",
+    displayName: catalogDisplayName("exa-topic-watch"),
+    automatable: catalogAutomatable("exa-topic-watch"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeExaTopicWatchWorkflow(
+        buildExaTopicWatchWorkflow({
+          triggerAddress: `exa-topic-watch@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: EXA_TOPIC_WATCH_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "process-granola-call",
+    displayName: catalogDisplayName("process-granola-call"),
+    automatable: catalogAutomatable("process-granola-call"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeProcessGranolaCallWorkflow(
+        buildProcessGranolaCallWorkflow({
+          triggerAddress: `process-granola-call@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: PROCESS_GRANOLA_CALL_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "attio-task-agent",
+    displayName: catalogDisplayName("attio-task-agent"),
+    automatable: catalogAutomatable("attio-task-agent"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeAttioTaskAgentWorkflow(
+        buildAttioTaskAgentWorkflow({
+          triggerAddress: `attio-task-agent@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: ATTIO_TASK_AGENT_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "pain-point-collateral",
+    displayName: catalogDisplayName("pain-point-collateral"),
+    automatable: catalogAutomatable("pain-point-collateral"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializePainPointCollateralWorkflow(
+        buildPainPointCollateralWorkflow({
+          triggerAddress: `pain-point-collateral@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: PAIN_POINT_COLLATERAL_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "reddit-opportunity-scanner",
+    displayName: catalogDisplayName("reddit-opportunity-scanner"),
+    automatable: catalogAutomatable("reddit-opportunity-scanner"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeRedditOpportunityScannerWorkflow(
+        buildRedditOpportunityScannerWorkflow({
+          triggerAddress: `reddit-opportunity-scanner@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: REDDIT_OPPORTUNITY_SCANNER_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "collateral-generation",
+    displayName: catalogDisplayName("collateral-generation"),
+    automatable: catalogAutomatable("collateral-generation"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeCollateralGenerationWorkflow(
+        buildCollateralGenerationWorkflow({
+          triggerAddress: `collateral-generation@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: COLLATERAL_GENERATION_TURN_TIMEOUT_MS,
+        }),
+      ),
+  },
+  {
+    assetName: "diligence-brief",
+    displayName: catalogDisplayName("diligence-brief"),
+    automatable: catalogAutomatable("diligence-brief"),
+    buildJson: (tenantDomain, inferencePreferences) =>
+      serializeDiligenceBriefWorkflow(
+        buildDiligenceBriefWorkflow({
+          triggerAddress: `diligence-brief@${tenantDomain}`,
+          inferencePreferences,
+          turnTimeoutMs: DILIGENCE_BRIEF_TURN_TIMEOUT_MS,
         }),
       ),
   },
@@ -311,28 +532,92 @@ export const DEFAULT_WORKFLOWS: readonly DefaultWorkflow[] = [
  * explicit, dev/CI-specific caller (`workbench seed` with
  * `WORKBENCH_SEED_CATALOG_TEST_WORKFLOWS` set) opts in.
  *
- * workbench-digest used to live here as a platform exercise; it is now the
- * seed automation in `DEFAULT_WORKFLOWS` so every personal bench has an
- * honest Routines-picker option.
+ * workbench-digest used to live here as a platform exercise, then moved
+ * to `DEFAULT_WORKFLOWS`; it now lives in `CATALOG_WORKFLOWS` (CL-7074),
+ * deployable through the catalog instantiate route (CL-7073) rather than
+ * seeded onto every bench.
  */
 export const CATALOG_TEST_WORKFLOWS: readonly DefaultWorkflow[] = [
   {
     assetName: "heartbeat",
     displayName: catalogDisplayName("heartbeat"),
     automatable: catalogAutomatable("heartbeat"),
-    buildJson: (tenantDomain, model) =>
+    buildJson: (tenantDomain, inferencePreferences) =>
       serializeHeartbeatWorkflow(
         buildHeartbeatWorkflow({
           triggerAddress: `heartbeat@${tenantDomain}`,
-          inferencePreferences: [
-            { provider: model.provider, model: model.model },
-          ],
+          inferencePreferences,
           turnTimeoutMs: HEARTBEAT_TURN_TIMEOUT_MS,
         }),
       ),
     modelSource: NOOP_MODEL_SOURCE,
   },
 ];
+
+/**
+ * Every `workflows/<name>` source directory that deliberately carries no
+ * `DefaultWorkflow` entry anywhere (`DEFAULT_WORKFLOWS`,
+ * `CATALOG_WORKFLOWS`, `CATALOG_TEST_WORKFLOWS`), with a one-line reason
+ * each. Kept empty on purpose right now — every current source directory
+ * is registered somewhere — so a future package that's genuinely not a
+ * deployable workflow (a shared library living under `workflows/` by
+ * convention, say) has a place to say so instead of failing
+ * `seed.test.ts`'s registration-invariant test silently by omission.
+ */
+export const EXCLUDED_WORKFLOW_SOURCES: readonly {
+  readonly name: string;
+  readonly reason: string;
+}[] = [];
+
+/**
+ * The deployable-through-the-catalog-instantiate-route entry for one
+ * asset name (CL-7073), or `undefined` if none exists. `CATALOG_WORKFLOWS`
+ * is the one source of truth for "has a source package under
+ * `workflows/<name>` and can be deployed on demand" — `DEFAULT_WORKFLOWS`
+ * (seeded already, never re-deployed through this path) and
+ * `CATALOG_TEST_WORKFLOWS` (test-only, never deployed onto a real bench)
+ * both answer `undefined` here on purpose.
+ */
+export function deployableCatalogWorkflow(
+  assetName: string,
+): DefaultWorkflow | undefined {
+  return CATALOG_WORKFLOWS.find((workflow) => workflow.assetName === assetName);
+}
+
+/**
+ * Whether a catalog entry's own definition carries `credentialBindings` —
+ * the same field `deployCodeSourcedWorkflow` (`vendor/intx/hub-sessions`)
+ * refuses to resolve without a `credentialCipher`, a seam the current
+ * Interchange pin's `POST /template-blocks/:assetName/deploy` front does
+ * not supply (see `docs/seed-reconciliation.md`; closes at the re-pin,
+ * CL-7107 / PR #632, pin 692c3106). Derived by rendering the entry's own
+ * `buildJson` with placeholder deploy args and reading the serialized
+ * definition's `credentialBindings` back — never a hand-kept list, so this
+ * can never drift from the workflows that actually declare bindings.
+ */
+export function catalogWorkflowRequiresCredentialCipher(
+  entry: DefaultWorkflow,
+): boolean {
+  const rendered = entry.buildJson("example.workbench.invalid", []);
+  const parsed = JSON.parse(rendered) as {
+    credentialBindings?: readonly unknown[];
+  };
+  return (parsed.credentialBindings?.length ?? 0) > 0;
+}
+
+/**
+ * Whether a catalog asset name can deploy through the current
+ * `POST /template-blocks/:assetName/deploy` front on this Interchange pin.
+ * `false` for a name with no `CATALOG_WORKFLOWS` entry at all (nothing
+ * deployable) or one whose entry requires a `credentialCipher` this pin
+ * cannot supply — the route and the available-catalog listing both call
+ * this instead of keeping their own copy of which six entries qualify.
+ */
+export function catalogWorkflowDeployableOnThisPin(assetName: string): boolean {
+  const entry = deployableCatalogWorkflow(assetName);
+  if (entry === undefined) return false;
+  return !catalogWorkflowRequiresCredentialCipher(entry);
+}
 
 // The grants the deploy, trigger, and run-listing routes gate on,
 // planted at the wildcard scope the authz glob matcher resolves
@@ -343,11 +628,11 @@ export const SEED_GRANTS: readonly { resource: string; action: string }[] = [
   { resource: "workflow:*", action: "read" },
   { resource: "workflow-run:*", action: "manage" },
   { resource: "workflow-run:*", action: "read" },
-  // CL-6201: `ensureDefaultRoutines` lists deployed definitions (GET
-  // .../workflows/definitions) and creates/disables preset routines
-  // (POST/PATCH .../routines) — none of the grants above cover those
-  // routes, which gate on their own resource/action pairs.
+  // Workflow-definition read/update (stop a startStopped deploy, list
+  // definitions) and extra workflow-run verbs none of the grants above
+  // cover. Those routes gate on their own resource/action pairs.
   { resource: "workflow-definition:*", action: "read" },
+  { resource: "workflow-definition:*", action: "update" },
   { resource: "workflow-run:*", action: "create" },
   { resource: "workflow-run:*", action: "write" },
   // CL-6346 moved the room routes (post a message, read-state, typing,
@@ -734,6 +1019,96 @@ async function ensureDeployment(
   return deployment.id;
 }
 
+/**
+ * After deploy, PUT a pristine authored definition to `stopped` so a native
+ * ScheduleTrigger does not fire every tenant. A member-restored row
+ * (`updatedAt !== createdAt`) or an already-stopped row is left alone —
+ * re-seed must never re-archive an enablement the member already chose.
+ * Uses the existing agent-directory status route (grant:
+ * `workflow-definition:<id>` `update`).
+ */
+async function stopPristineScheduledDefinition(
+  api: ApiCall,
+  cookies: string[],
+  args: { tenantId: string; assetName: string },
+  log: (line: string) => void,
+): Promise<void> {
+  const definitions = await listAllWorkflowDefinitions(
+    api,
+    cookies,
+    args.tenantId,
+  );
+  const row = definitions.find(
+    (definition) => definition.name === args.assetName,
+  );
+  if (row === undefined) {
+    throw new HubApiError(
+      `seeded workflow ${args.assetName} has no authored definition to stop`,
+      "re-run: workbench seed after the deploy has projected a definition row",
+    );
+  }
+  if (row.status === "stopped") {
+    log(`definition ${args.assetName} already stopped (skipped)`);
+    return;
+  }
+  if (row.createdAt !== row.updatedAt) {
+    log(
+      `definition ${args.assetName} was touched; leaving status ${row.status}`,
+    );
+    return;
+  }
+  const updated = await api(
+    "PUT",
+    `/api/tenants/${args.tenantId}/agent-definitions/${row.id}/status`,
+    { status: "stopped" },
+    cookies,
+  );
+  if (updated.status !== 200) {
+    throw new HubApiError(
+      `the hub rejected stopping definition ${args.assetName} with status ${updated.status}: ${JSON.stringify(updated.data)}`,
+      "check the hub logs for the underlying failure, then re-run: workbench seed",
+    );
+  }
+  log(
+    `stopped definition ${args.assetName} so its native schedule does not fire until restored`,
+  );
+}
+
+async function listAllWorkflowDefinitions(
+  api: ApiCall,
+  cookies: string[],
+  tenantId: string,
+): Promise<(typeof WorkflowDefinitionResponse.infer)[]> {
+  const items: (typeof WorkflowDefinitionResponse.infer)[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const query =
+      cursor === undefined
+        ? "limit=200"
+        : `limit=200&cursor=${encodeURIComponent(cursor)}`;
+    const listed = await api(
+      "GET",
+      `/api/tenants/${tenantId}/workflows/definitions?${query}`,
+      undefined,
+      cookies,
+    );
+    const page = parseAs(
+      paginatedSchema(WorkflowDefinitionResponse),
+      listed.data,
+      "definitions response",
+    );
+    items.push(...page.data);
+    if (page.nextCursor === null) return items;
+    if (items.length > 10_000) {
+      throw new HubApiError(
+        `definitions list for tenant ${tenantId} did not terminate while paging`,
+        "check the hub logs for the underlying failure, then re-run: workbench seed",
+      );
+    }
+    cursor = page.nextCursor;
+  }
+}
+
 async function confirmDeploymentAnswers(
   api: ApiCall,
   cookies: string[],
@@ -850,9 +1225,10 @@ export type SeedTenantArgs = {
  * seeds it without re-authenticating or re-resolving the tenant by
  * slug.
  *
- * Grants + workflows/routines only. Assumes the tenant hierarchy
- * already exposes `corbits-tools` (published at `workbench setup` onto
- * the root); seed does not pack tarballs or run freshness.
+ * Grants + workflows, then prune of leftover preset routine wrappers.
+ * Assumes the tenant hierarchy already exposes `corbits-tools`
+ * (published at `workbench setup` onto the root); seed does not pack
+ * tarballs or run freshness.
  */
 export async function seedTenant(args: SeedTenantArgs): Promise<void> {
   const {
@@ -905,7 +1281,9 @@ export async function seedTenant(args: SeedTenantArgs): Promise<void> {
     const pushed = await args.pushWorkflow({
       remoteUrl: `${hubUrl}/api/tenants/${tenant.tenantId}/assets/workflow/${workflow.assetName}.git`,
       tokenSecret,
-      workflowJson: workflow.buildJson(tenant.domain, workflowModel),
+      workflowJson: workflow.buildJson(tenant.domain, [
+        { provider: workflowModel.provider, model: workflowModel.model },
+      ]),
       packageName: `@workbench-seed/${workflow.assetName}`,
     });
     log(
@@ -927,6 +1305,14 @@ export async function seedTenant(args: SeedTenantArgs): Promise<void> {
       log,
     );
 
+    if (workflow.startStopped === true) {
+      await stopPristineScheduledDefinition(
+        api,
+        cookies,
+        { tenantId: tenant.tenantId, assetName: workflow.assetName },
+        log,
+      );
+    }
     if (confirmDeployments) {
       await confirmDeploymentAnswers(
         api,
@@ -951,14 +1337,6 @@ export async function seedTenant(args: SeedTenantArgs): Promise<void> {
       "check the failures reported above, fix them, then re-run: workbench seed",
     );
   }
-
-  // CL-6201: every default workflow above is now deployed, so any
-  // preset routine whose definition just landed can be planted. Runs
-  // after the deploy loop (never before) — a preset targeting a
-  // workflow this call didn't deploy is skipped with a log line rather
-  // than failing seeding outright, which keeps a narrowed `workflows`
-  // list (as several tests here pass) a partial-but-valid seed.
-  await ensureDefaultRoutines(api, cookies, tenant.tenantId, log);
 
   log(
     confirmDeployments
@@ -1343,7 +1721,52 @@ async function ensureCatalogOffering(
     return;
   }
   if (created.status === 409) {
-    log("catalog offering already exists (skipped)");
+    let cursor: string | null = null;
+    let existing: typeof ModelOfferingResponse.infer | undefined;
+    do {
+      const listed = await api(
+        "GET",
+        `/api/tenants/${args.tenantId}/catalog/offerings${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`,
+        undefined,
+        cookies,
+      );
+      const page = parseAs(
+        paginatedSchema(ModelOfferingResponse),
+        listed.data,
+        "catalog offerings response",
+      );
+      existing = page.data.find(
+        (offering) =>
+          offering.modelId === args.modelId &&
+          offering.providerId === args.providerId,
+      );
+      cursor = page.nextCursor;
+    } while (existing === undefined && cursor !== null);
+    if (!existing) {
+      throw new HubApiError(
+        "catalog offering reported a conflict but is not listable on the bench",
+        "check the hub logs for the underlying failure, then re-run: workbench seed",
+      );
+    }
+    if (existing.priority === args.priority) {
+      log("catalog offering already exists (skipped)");
+      return;
+    }
+
+    const updated = await api(
+      "PATCH",
+      `/api/tenants/${args.tenantId}/catalog/offerings/${existing.id}`,
+      { priority: args.priority },
+      cookies,
+    );
+    if (updated.status !== 200) {
+      throw new HubApiError(
+        `the hub rejected updating the catalog offering priority with status ${updated.status}: ${JSON.stringify(updated.data)}`,
+        "check the hub logs for the underlying failure, then re-run: workbench seed",
+      );
+    }
+    parseAs(ModelOfferingResponse, updated.data, "catalog offering response");
+    log("updated catalog offering priority");
     return;
   }
   throw new HubApiError(
@@ -1570,14 +1993,14 @@ export async function seedCatalog(
     },
     log,
   );
-  // Priority = the provider's CATALOG_SEEDS declaration index (anthropic
-  // first), so when several connected providers serve the same model the
-  // fallback order is deterministic instead of an all-zeroes tie broken
-  // by insertion accident.
-  const offeringPriority = Math.max(
-    0,
-    Object.keys(CATALOG_SEEDS).indexOf(provider),
-  );
+  // Flatten the curated provider/model declaration order into one priority
+  // sequence. Provider order still controls cross-provider fallback, while
+  // model order makes each provider's declared default the first choice.
+  let offeringPriorityOffset = 0;
+  for (const [seedProvider, providerSeed] of Object.entries(CATALOG_SEEDS)) {
+    if (seedProvider === provider) break;
+    offeringPriorityOffset += providerSeed.models.length;
+  }
   // What each deployment can do, resolved from the pinned catalog's probe
   // results. Until this, every seeded offering stored an empty capability
   // list, so no capability filter — this repo's concept resolution or the
@@ -1589,7 +2012,7 @@ export async function seedCatalog(
     canonicalName: string;
     capabilities: readonly string[];
   }[] = [];
-  for (const model of seededModels) {
+  for (const [modelIndex, model] of seededModels.entries()) {
     // Ollama's dynamic entries already carry their own live-probed
     // capabilities (`fetchOllamaModelCatalog`, CL-6366) — narrowed against
     // the real `Capability` enum here, the trust boundary, rather than
@@ -1631,7 +2054,7 @@ export async function seedCatalog(
         tenantId,
         modelId: model.id,
         providerId: catalogProviderId,
-        priority: offeringPriority,
+        priority: offeringPriorityOffset + modelIndex,
         capabilities,
         ...(quirks !== undefined ? { quirks } : {}),
       },

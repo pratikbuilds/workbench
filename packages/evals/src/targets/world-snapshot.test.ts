@@ -18,16 +18,6 @@ type FakeTables = {
     description: string | null;
     assetId: string | null;
   }[];
-  routines: {
-    id: string;
-    tenantId: string;
-    name: string;
-    definitionAssetId: string;
-    trigger: unknown;
-    deliveryWorkbenchId: string | null;
-    enabled: boolean;
-    deletedAt: Date | null;
-  }[];
   providers: {
     id: string;
     tenantId: string;
@@ -70,9 +60,7 @@ function fakeDb(tables: FakeTables): DB["db"] {
     select: () => ({
       from: (table: unknown) => ({
         where: async () =>
-          table === webhookTriggerTable
-            ? tables.webhookTriggers
-            : tables.routines,
+          table === webhookTriggerTable ? tables.webhookTriggers : [],
       }),
     }),
   } as unknown as DB["db"];
@@ -130,7 +118,6 @@ function workflowJsonWith(
 function emptyTables(): FakeTables {
   return {
     workflowDefinitions: [],
-    routines: [],
     providers: [],
     credentials: [],
     webhookTriggers: [],
@@ -183,38 +170,6 @@ test("captureWorldSnapshot skips a definition with no materialized asset", async
   };
   const world = await captureWorldSnapshot(infra, "tenant-1");
   expect(world.agentDefinitions).toEqual([]);
-});
-
-test("captureWorldSnapshot reads routines with their trigger and delivery", async () => {
-  const tables = emptyTables();
-  tables.routines = [
-    {
-      id: "r-1",
-      tenantId: "tenant-1",
-      name: "Daily digest",
-      definitionAssetId: "def-1",
-      trigger: { kind: "daily", time: "09:00" },
-      deliveryWorkbenchId: "wb-1",
-      enabled: true,
-      deletedAt: null,
-    },
-  ];
-  const infra: WorldSnapshotInfra = {
-    db: fakeDb(tables),
-    resolveCredentialByNameFn: fakeResolveCredentialByName(tables),
-    assetService: fakeAssetService({}),
-  };
-  const world = await captureWorldSnapshot(infra, "tenant-1");
-  expect(world.routines).toEqual([
-    {
-      id: "r-1",
-      name: "Daily digest",
-      definitionAssetId: "def-1",
-      trigger: { kind: "daily", time: "09:00" },
-      deliveryWorkbenchId: "wb-1",
-      enabled: true,
-    },
-  ]);
 });
 
 test("captureWorldSnapshot reads live MCP connections", async () => {
@@ -321,7 +276,6 @@ test("captureWorldSnapshot returns an empty, well-formed snapshot for a tenant w
   };
   const world = await captureWorldSnapshot(infra, "tenant-1");
   expect(world.agentDefinitions).toEqual([]);
-  expect(world.routines).toEqual([]);
   expect(world.connections).toEqual([]);
   expect(world.fakeReceipts).toEqual([]);
   expect(typeof world.capturedAt).toBe("string");

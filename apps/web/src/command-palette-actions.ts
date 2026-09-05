@@ -17,15 +17,6 @@
 // hop the sidebar's own "+" control uses. A second "new-agent" row that
 // said and did the same thing was dropped (CL-6820). "New thread" is out
 // of scope (killed by owner decision).
-//
-// "New routine" (CL-6125, reworked CL-6139) needs none of that: it opens
-// the canvas column's routine pane, and canvas state lives in
-// `ShellChromeProvider` above every route, not inside a page that has to
-// mount first — so `requestNewRoutine` just calls the caller's own
-// `openRoutine` (from `useOpenRoutineInCanvas`) synchronously, no pending
-// flag, no window event, and — per the CL-6139 owner note — no navigation
-// either: the panel opens beside whatever page is already showing, it
-// never hops to `/routines` first the way this used to.
 
 import { createPendingDialogRequest } from "@corbits/shell-layout";
 import { CHAT_STRINGS } from "@corbits/chat-ui";
@@ -35,7 +26,6 @@ import { listAgentDefinitions } from "./agents-api";
 import { openAgentDmChat } from "./agent-dm-launch";
 import { findMyraDefinition } from "./myra-workbench";
 import { requestLibraryUpload } from "./library-upload";
-import type { RoutinePanelSubject } from "./shell/canvas-availability";
 
 export const NEW_SKILL_EVENT = "workbench:skills:create";
 
@@ -44,30 +34,6 @@ const newSkillRequest = createPendingDialogRequest();
 /** Consumed by skills-settings-section.tsx on mount. */
 export const consumePendingNewSkill = newSkillRequest.consumePending;
 
-/**
- * Opens the routine panel's editor view directly on a brand-new routine,
- * beside whatever page is already showing — never a `/routines` hop. Every
- * "start a routine" affordance with something to prefill (the `>` command
- * palette, "Make this a routine") funnels through this one function; the
- * chat header and `/run` open the panel's list view instead (see
- * `chat-page.tsx`), since they have nothing to prefill.
- */
-export function requestNewRoutine(args: {
-  readonly openRoutine: (subject: RoutinePanelSubject) => void;
-  readonly initialName?: string;
-  readonly initialInstruction?: string;
-}): void {
-  args.openRoutine({
-    routineId: null,
-    ...(args.initialName !== undefined
-      ? { initialName: args.initialName }
-      : {}),
-    ...(args.initialInstruction !== undefined
-      ? { initialInstruction: args.initialInstruction }
-      : {}),
-  });
-}
-
 /** Test helper — drop leftover pending state between cases. */
 export function resetPendingDialogRequests(): void {
   newSkillRequest.resetPending();
@@ -75,7 +41,6 @@ export function resetPendingDialogRequests(): void {
 
 export type ActionCommandId =
   | "new-workbench"
-  | "new-routine"
   | "new-skill"
   | "upload-artifact"
   | "toggle-theme"
@@ -99,11 +64,6 @@ export const ACTION_COMMANDS: readonly ActionCommand[] = [
     id: "new-workbench",
     title: CHAT_STRINGS.newWorkbenchAction,
     subtitle: "Start a new workbench",
-  },
-  {
-    id: "new-routine",
-    title: "New routine",
-    subtitle: "Schedule · trigger · demand",
   },
   { id: "new-skill", title: "New skill", subtitle: "Workbench capability" },
   {
@@ -140,7 +100,6 @@ export type ActionCommandContext = {
   readonly tenantId: string | null;
   readonly cycleTheme: () => void;
   readonly closeCanvas: () => void;
-  readonly openRoutine: (subject: RoutinePanelSubject) => void;
 };
 
 /**
@@ -157,10 +116,6 @@ export async function runActionCommand(
   switch (id) {
     case "new-workbench": {
       ctx.navigate(NEW_WORKBENCH_PATH);
-      return;
-    }
-    case "new-routine": {
-      requestNewRoutine({ openRoutine: ctx.openRoutine });
       return;
     }
     case "new-skill": {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { WorkflowPusher } from "@corbits/seeding";
 import { CATALOG_SEEDS, SETUP_AGENT_ASSET_NAME } from "@corbits/seeding";
 import { type ApiCall, SidecarUnavailableError } from "@corbits/hub-api-client";
+import { pristineScheduledDefinitionHandshake } from "../../seeding/test/helpers";
 import {
   completeCredentialSetup,
   ensureSeeded,
@@ -50,6 +51,16 @@ const stubPersistFns = {
 function collector() {
   const lines: string[] = [];
   return { lines, log: (line: string) => lines.push(line) };
+}
+
+function seedHandshake(method: string, path: string) {
+  const handshake = pristineScheduledDefinitionHandshake(
+    method,
+    path,
+    TENANT_ID,
+  );
+  if (handshake === undefined) return undefined;
+  return { ...handshake, cookies: [] };
 }
 
 function principalsResponse() {
@@ -467,12 +478,7 @@ describe("completeCredentialSetup", () => {
       kind: "seeded",
       tenantId: TENANT_ID,
       tenantSlug: TENANT_SLUG,
-      workflows: [
-        "assistant",
-        "echo",
-        "workbench-digest",
-        "last-30-days-research",
-      ],
+      workflows: ["assistant"],
     });
     expect(seedCatalogCalls).toHaveLength(1);
     expect(seedTenantCalls[0]?.model.provider).toBe("anthropic");
@@ -517,12 +523,7 @@ describe("completeCredentialSetup", () => {
       kind: "seeded",
       tenantId: TENANT_ID,
       tenantSlug: TENANT_SLUG,
-      workflows: [
-        "assistant",
-        "echo",
-        "workbench-digest",
-        "last-30-days-research",
-      ],
+      workflows: ["assistant"],
     });
     expect(seedCatalogCalls).toHaveLength(1);
     expect(seedTenantCalls).toHaveLength(1);
@@ -567,12 +568,7 @@ describe("completeCredentialSetup", () => {
       kind: "seeded",
       tenantId: TENANT_ID,
       tenantSlug: TENANT_SLUG,
-      workflows: [
-        "assistant",
-        "echo",
-        "workbench-digest",
-        "last-30-days-research",
-      ],
+      workflows: ["assistant"],
     });
     expect(seedCatalogCalls).toHaveLength(1);
     expect(seedCatalogCalls[0]?.provider).toBe("groq");
@@ -753,6 +749,17 @@ describe("completeCredentialSetup", () => {
           cookies: [],
         };
       }
+      if (
+        method === "GET" &&
+        (path === `/api/tenants/${TENANT_ID}/catalog/offerings` ||
+          path.startsWith(`/api/tenants/${TENANT_ID}/catalog/offerings?`))
+      ) {
+        return {
+          status: 200,
+          data: { data: [], nextCursor: null },
+          cookies: [],
+        };
+      }
       throw new Error(`unexpected call: ${method} ${path}`);
     };
 
@@ -873,40 +880,8 @@ describe("completeCredentialSetup", () => {
       if (method === "POST" && path === `/api/tenants/${TENANT_ID}/skills`) {
         return { status: 201, data: {}, cookies: [] };
       }
-      if (
-        method === "GET" &&
-        path === `/api/tenants/${TENANT_ID}/workflows/definitions`
-      ) {
-        return {
-          status: 200,
-          data: { data: [], nextCursor: null },
-          cookies: [],
-        };
-      }
-      if (method === "GET" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        return { status: 200, data: { items: [] }, cookies: [] };
-      }
-      if (method === "POST" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        const routineBody = body as {
-          name: string;
-          presetKey: string;
-          deliveryWorkbenchId?: string;
-        };
-        return {
-          status: 201,
-          data: {
-            id: `rtn_${routineBody.presetKey}`,
-            tenantId: TENANT_ID,
-            name: routineBody.name,
-            enabled: false,
-            deliveryWorkbenchId: routineBody.deliveryWorkbenchId ?? null,
-            presetKey: routineBody.presetKey,
-            createdAt: TIMESTAMP,
-            updatedAt: TIMESTAMP,
-          },
-          cookies: [],
-        };
-      }
+      const handshake = seedHandshake(method, path);
+      if (handshake) return handshake;
       if (
         method === "GET" &&
         path === `/api/tenants/${TENANT_ID}/workflows/deployments`
@@ -980,12 +955,7 @@ describe("completeCredentialSetup", () => {
 
     expect(result.kind).toBe("seeded");
     if (result.kind === "seeded") {
-      expect(result.workflows).toEqual([
-        "assistant",
-        "echo",
-        "workbench-digest",
-        "last-30-days-research",
-      ]);
+      expect(result.workflows).toEqual(["assistant"]);
     }
   });
 
@@ -1004,7 +974,12 @@ describe("completeCredentialSetup", () => {
     const deployments: { definitionAssetId: string; id: string }[] = [];
     const catalogModels: Row[] = [];
     const catalogProviders: Row[] = [];
-    const catalogOfferings: { modelId: string; providerId: string }[] = [];
+    const catalogOfferings: {
+      id: string;
+      modelId: string;
+      providerId: string;
+      priority: number;
+    }[] = [];
     const providers: Row[] = [];
     const credentials: Row[] = [];
     let assetCreatePosts = 0;
@@ -1112,40 +1087,8 @@ describe("completeCredentialSetup", () => {
       if (method === "POST" && path === `/api/tenants/${TENANT_ID}/skills`) {
         return { status: 201, data: {}, cookies: [] };
       }
-      if (
-        method === "GET" &&
-        path === `/api/tenants/${TENANT_ID}/workflows/definitions`
-      ) {
-        return {
-          status: 200,
-          data: { data: [], nextCursor: null },
-          cookies: [],
-        };
-      }
-      if (method === "GET" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        return { status: 200, data: { items: [] }, cookies: [] };
-      }
-      if (method === "POST" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        const routineBody = body as {
-          name: string;
-          presetKey: string;
-          deliveryWorkbenchId?: string;
-        };
-        return {
-          status: 201,
-          data: {
-            id: `rtn_${routineBody.presetKey}`,
-            tenantId: TENANT_ID,
-            name: routineBody.name,
-            enabled: false,
-            deliveryWorkbenchId: routineBody.deliveryWorkbenchId ?? null,
-            presetKey: routineBody.presetKey,
-            createdAt: TIMESTAMP,
-            updatedAt: TIMESTAMP,
-          },
-          cookies: [],
-        };
-      }
+      const handshake = seedHandshake(method, path);
+      if (handshake) return handshake;
       if (
         method === "GET" &&
         path === `/api/tenants/${TENANT_ID}/workflows/deployments`
@@ -1407,27 +1350,63 @@ describe("completeCredentialSetup", () => {
         method === "POST" &&
         path === `/api/tenants/${TENANT_ID}/catalog/offerings`
       ) {
-        const b = body as { modelId: string; providerId: string };
+        const b = body as {
+          modelId: string;
+          providerId: string;
+          priority: number;
+        };
         const existing = catalogOfferings.find(
           (o) => o.modelId === b.modelId && o.providerId === b.providerId,
         );
         if (existing) return { status: 409, data: {}, cookies: [] };
         catalogOfferingCreatePosts += 1;
-        catalogOfferings.push({ modelId: b.modelId, providerId: b.providerId });
+        const id = `off_${catalogOfferings.length + 1}`;
+        catalogOfferings.push({
+          id,
+          modelId: b.modelId,
+          providerId: b.providerId,
+          priority: b.priority,
+        });
         return {
           status: 201,
           data: {
-            id: `off_${catalogOfferings.length}`,
+            id,
             tenantId: TENANT_ID,
             modelId: b.modelId,
             providerId: b.providerId,
-            priority: 0,
+            priority: b.priority,
             deploymentTags: [],
             capabilities: [],
             quirks: null,
             disabled: false,
             createdAt: TIMESTAMP,
             updatedAt: TIMESTAMP,
+          },
+          cookies: [],
+        };
+      }
+      if (
+        method === "GET" &&
+        (path === `/api/tenants/${TENANT_ID}/catalog/offerings` ||
+          path.startsWith(`/api/tenants/${TENANT_ID}/catalog/offerings?`))
+      ) {
+        return {
+          status: 200,
+          data: {
+            data: catalogOfferings.map((o) => ({
+              id: o.id,
+              tenantId: TENANT_ID,
+              modelId: o.modelId,
+              providerId: o.providerId,
+              priority: o.priority,
+              deploymentTags: [],
+              capabilities: [],
+              quirks: null,
+              disabled: false,
+              createdAt: TIMESTAMP,
+              updatedAt: TIMESTAMP,
+            })),
+            nextCursor: null,
           },
           cookies: [],
         };
@@ -1459,8 +1438,8 @@ describe("completeCredentialSetup", () => {
     // (one POST each for model and offering); the rest of the chain is
     // still a single provider/credential row.
     const anthropicCatalogSize = CATALOG_SEEDS.anthropic.models.length;
-    expect(assetCreatePosts).toBe(4);
-    expect(deploymentCreatePosts).toBe(4);
+    expect(assetCreatePosts).toBe(1);
+    expect(deploymentCreatePosts).toBe(1);
     expect(catalogModelCreatePosts).toBe(anthropicCatalogSize);
     expect(catalogProviderCreatePosts).toBe(1);
     expect(catalogOfferingCreatePosts).toBe(anthropicCatalogSize);
@@ -1469,8 +1448,8 @@ describe("completeCredentialSetup", () => {
     // existing row rather than leaving it untouched (the CL-6103 fix,
     // updated by CL-6123 to no longer require a probe first).
     expect(credentialRotatePatches).toBe(1);
-    expect(assets.length).toBe(4);
-    expect(deployments.length).toBe(4);
+    expect(assets.length).toBe(1);
+    expect(deployments.length).toBe(1);
   });
 
   test("a pasted key with no metadata stays an ordinary api_key credential", async () => {
@@ -1564,12 +1543,7 @@ describe("completeCredentialSetup", () => {
       principalId: PRINCIPAL_ID,
       tenantDomain: "alice-user1.bench.local",
       deployed: [],
-      pending: [
-        "assistant",
-        "echo",
-        "workbench-digest",
-        "last-30-days-research",
-      ],
+      pending: ["assistant"],
       message: "Your workbench is ready — agents will come online shortly.",
     });
   });
@@ -1768,12 +1742,7 @@ describe("ensureSeeded (the slow half)", () => {
 
     expect(result).toEqual({
       kind: "seeded",
-      workflows: [
-        "assistant",
-        "echo",
-        "workbench-digest",
-        "last-30-days-research",
-      ],
+      workflows: ["assistant"],
     });
     expectNoConfirmation(seedTenantCalls);
     expect(seedTenantCalls[0]?.model.provider).toBe("anthropic");
@@ -1784,6 +1753,9 @@ describe("ensureSeeded (the slow half)", () => {
     // (bench-provisioning's `runOnce` → `ensureSeeded` → `seedTenant`),
     // and `seedTenant` works through the list in order at ~20s each — so
     // the order handed in here is the order a fresh signup experiences.
+    // CL-7074 narrowed DEFAULT_WORKFLOWS to just the setup agent, so
+    // "before anything else" is now trivially satisfied by being the
+    // only entry — this still pins that fact rather than assuming it.
     const workflowOrder: string[] = [];
 
     await ensureSeeded({
@@ -1807,7 +1779,6 @@ describe("ensureSeeded (the slow half)", () => {
     });
 
     expect(workflowOrder[0]).toBe(SETUP_AGENT_ASSET_NAME);
-    expect(workflowOrder.length).toBeGreaterThan(1);
   });
 
   test("two overlapping calls for the same tenant never double-deploy — the same 409-then-list tolerance seedTenant already has", async () => {
@@ -1816,12 +1787,6 @@ describe("ensureSeeded (the slow half)", () => {
     const grants: { resource: string; action: string }[] = [];
     const assets: Row[] = [];
     const deployments: { definitionAssetId: string; id: string }[] = [];
-    const routines: {
-      id: string;
-      name: string;
-      presetKey: string;
-      deliveryWorkbenchId: string | null;
-    }[] = [];
     let assetCreatePosts = 0;
     let deploymentCreatePosts = 0;
 
@@ -1916,61 +1881,8 @@ describe("ensureSeeded (the slow half)", () => {
       if (method === "POST" && path === `/api/tenants/${TENANT_ID}/skills`) {
         return { status: 201, data: {}, cookies: [] };
       }
-      if (
-        method === "GET" &&
-        path === `/api/tenants/${TENANT_ID}/workflows/definitions`
-      ) {
-        return {
-          status: 200,
-          data: { data: [], nextCursor: null },
-          cookies: [],
-        };
-      }
-      if (method === "GET" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        return {
-          status: 200,
-          data: {
-            items: routines.map((r) => ({
-              id: r.id,
-              name: r.name,
-              enabled: false,
-              deliveryWorkbenchId: r.deliveryWorkbenchId,
-              presetKey: r.presetKey,
-              createdAt: TIMESTAMP,
-              updatedAt: TIMESTAMP,
-            })),
-          },
-          cookies: [],
-        };
-      }
-      if (method === "POST" && path === `/api/tenants/${TENANT_ID}/routines`) {
-        const routineBody = body as {
-          name: string;
-          presetKey: string;
-          deliveryWorkbenchId?: string;
-        };
-        const id = `rtn_${routineBody.presetKey}`;
-        routines.push({
-          id,
-          name: routineBody.name,
-          presetKey: routineBody.presetKey,
-          deliveryWorkbenchId: routineBody.deliveryWorkbenchId ?? null,
-        });
-        return {
-          status: 201,
-          data: {
-            id,
-            tenantId: TENANT_ID,
-            name: routineBody.name,
-            enabled: false,
-            deliveryWorkbenchId: routineBody.deliveryWorkbenchId ?? null,
-            presetKey: routineBody.presetKey,
-            createdAt: TIMESTAMP,
-            updatedAt: TIMESTAMP,
-          },
-          cookies: [],
-        };
-      }
+      const handshake = seedHandshake(method, path);
+      if (handshake) return handshake;
       if (
         method === "GET" &&
         path === `/api/tenants/${TENANT_ID}/workflows/deployments`
@@ -2044,10 +1956,10 @@ describe("ensureSeeded (the slow half)", () => {
 
     expect(first.kind).toBe("seeded");
     expect(second.kind).toBe("seeded");
-    expect(assetCreatePosts).toBe(4);
-    expect(deploymentCreatePosts).toBe(4);
-    expect(assets.length).toBe(4);
-    expect(deployments.length).toBe(4);
+    expect(assetCreatePosts).toBe(1);
+    expect(deploymentCreatePosts).toBe(1);
+    expect(assets.length).toBe(1);
+    expect(deployments.length).toBe(1);
   });
 
   // CL-6264: tonight's live failure — completeCredentialSetup ->
@@ -2116,8 +2028,8 @@ describe("ensureSeeded (the slow half)", () => {
 
     expect(result).toEqual({
       kind: "seeded-pending-agents",
-      deployed: ["assistant", "echo"],
-      pending: ["workbench-digest", "last-30-days-research"],
+      deployed: ["assistant"],
+      pending: [],
       message: "Your workbench is ready — agents will come online shortly.",
     });
   });

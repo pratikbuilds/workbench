@@ -131,6 +131,7 @@ import path from "node:path";
 import { type } from "arktype";
 
 import { getLogger } from "@intx/log";
+import { reportError } from "@corbits/error-sink";
 import { createConnectorRouter } from "@intx/harness";
 import type { ConnectorReplyParts, RouteDecision } from "@intx/harness";
 import {
@@ -143,6 +144,7 @@ import type {
   RepoStore,
 } from "@intx/hub-sessions/substrate";
 import { WORKFLOW_RUN_AGENT_STATE_PREFIX } from "@intx/hub-sessions/substrate";
+import { SignalKind } from "@intx/types";
 
 import { UNSCOPED_ORIGINATING_WORKBENCH_ID } from "./originating-workbench";
 import {
@@ -996,6 +998,51 @@ function castValidatedEnvelope<T>(items: unknown[]): T[] {
 }
 
 /**
+ * A pending operation's `kind` envelope: just enough structure to read
+ * `kind` back off an otherwise-unvalidated `PendingOperation` (the element
+ * validator itself lives in the reactor, per `castValidatedEnvelope`'s
+ * doc comment above). Used only to detect a `kind` the running build's
+ * `SignalKind` no longer recognizes -- e.g. CL-7443 retired
+ * `message_response` -- before the reactor's `rehydrateGates` reaches it,
+ * since an unclassified kind there throws and blocks every future respawn.
+ */
+const PendingOperationKindEnvelope = type({ kind: "unknown" });
+
+/**
+ * Drop any restored pending operation whose `kind` is not a `SignalKind`
+ * this build still classifies, reporting each drop through `reportError`
+ * rather than letting the reactor's `rehydrateGates` throw on it. A retired
+ * signal kind (CL-7443's `message_response`) can still be sitting in a warm
+ * agent's on-disk checkpoint/WAL from before the retirement; without this
+ * filter, every respawn of that agent would throw
+ * "Unclassified signal kind" and never start. The person's in-flight
+ * question is simply lost here -- their eventual reply just becomes the
+ * next ordinary turn (docs/CHAT.md).
+ */
+function dropUnclassifiedPendingOperations(
+  items: unknown[],
+  agentKey: string,
+): unknown[] {
+  return items.filter((item) => {
+    const envelope = PendingOperationKindEnvelope(item);
+    const kind = envelope instanceof type.errors ? undefined : envelope.kind;
+    if (SignalKind(kind) instanceof type.errors) {
+      reportError(
+        new Error(
+          `pending operation with unclassified signal kind ${JSON.stringify(kind)} dropped on restore for agent ${agentKey}`,
+        ),
+        {
+          operation: "pending_op_dropped_unknown_kind",
+          agentId: agentKey,
+        },
+      );
+      return false;
+    }
+    return true;
+  });
+}
+
+/**
  * Reconstruct the warm agent's conversation from the two-tier on-disk
  * layout under `agentStateDir`
  * (`<repoDir>/agent-state/<agentKey>/<workbenchId>/`): the compacted
@@ -1050,7 +1097,7 @@ export async function reconstructDurableConversation(
   return {
     turns: castValidatedEnvelope<ConversationTurn>(turns),
     pendingOperations: castValidatedEnvelope<PendingOperation>(
-      metadata.pendingOperations,
+      dropUnclassifiedPendingOperations(metadata.pendingOperations, agentKey),
     ),
     tokenUsage: metadata.tokenUsage,
     connectorState: metadata.connectorState,

@@ -48,5 +48,7 @@ const json = serializeHeartbeatWorkflow(definition);
 ```
 
 See [`workflows/README.md`](../README.md#status-note) for what
-registration/automatable/seeded mean — this one is seeded by default for
-every tenant, same as `workbench-digest`.
+registration/automatable/seeded mean — this one is a
+`CATALOG_TEST_WORKFLOWS` entry, kept for tests only, never seeded and
+never deployed onto a real bench. `workbench-digest` is not seeded either;
+it is deployable through the catalog instantiate route (CL-7073).

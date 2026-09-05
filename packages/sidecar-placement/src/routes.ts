@@ -16,8 +16,10 @@ export type CreateSidecarPlacementRoutesDeps = {
   store: SidecarPlacementStore;
   requireGrant: RequireGrant;
   /**
-   * Whether the hub has a sidecar provisioner registered
-   * (SIDECAR_PROVISIONERS names a real backend). When false, exclusive
+   * Whether the host has a sidecar provisioner registered. The workbench
+   * hub always does — an unconfigured install registers the `process`
+   * backend — but this package is a library, so a host that registers
+   * none must still get an honest answer. When false, exclusive
    * placement can never actually take effect — enabling it would silently
    * leave a workbench on the shared sidecar despite the setting reading
    * "on" — so PUT enabling it fails closed with 409, and GET exposes the

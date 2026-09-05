@@ -34,7 +34,11 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function stubFetch(routes: {
-  invitable: () => readonly { id: string; name: string }[];
+  invitable: () => readonly {
+    id: string;
+    name: string;
+    description?: string;
+  }[];
   createJimmy?: () => { id: string };
 }) {
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -52,7 +56,11 @@ function stubFetch(routes: {
 }
 
 async function mount(props: {
-  readonly invitable: () => readonly { id: string; name: string }[];
+  readonly invitable: () => readonly {
+    id: string;
+    name: string;
+    description?: string;
+  }[];
   readonly onInvite: (definitionId: string) => Promise<void>;
   readonly onOpenChange: (open: boolean) => void;
 }) {
@@ -144,5 +152,25 @@ describe("InviteAgentDialog's Jimmy quick-create row", () => {
 
     expect(invited).toEqual(["wfd_jimmy"]);
     expect(closed).toBe(true);
+  });
+});
+
+describe("InviteAgentDialog definition rows (CL-6424)", () => {
+  test("shows each definition's display name, never its raw slug", async () => {
+    const el = await mount({
+      invitable: () => [
+        { id: "wfd_myra", name: "myra", description: "Myra" },
+        { id: "wfd_review", name: "code-review" },
+        { id: "wfd_jimmy", name: JIMMY_QUICK_CREATE.handle },
+      ],
+      onInvite: async () => undefined,
+      onOpenChange: () => undefined,
+    });
+    const names = Array.from(
+      el.querySelectorAll(
+        '[data-testid="invitable-definition"] .chat-invitable-item-name',
+      ),
+    ).map((name) => name.textContent);
+    expect(names).toEqual(["Myra", "Code Review", "Jimmy"]);
   });
 });

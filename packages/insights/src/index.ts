@@ -54,6 +54,7 @@ export {
   summarizeLatency,
   summarizeUsage,
   summarizeUsageByTenant,
+  teamSpaceWorkbenchRows,
   type DayActivity,
   type LatencyStageStat,
   type LatencySummary,

@@ -117,6 +117,7 @@ export const AgentEventFrame = type({
   agentAddress: "string",
   sessionId: "string",
   event: InferenceEvent,
+  "childRunId?": "string",
 });
 export type AgentEventFrame = typeof AgentEventFrame.infer;
 

@@ -54,6 +54,7 @@ import type { HarnessConfig } from "@intx/types/runtime";
 // — the gate itself only stamps this hash on the `ok:true` arm.
 
 import {
+  createAgentDefinitionDraftRoutes,
   createAgentDefinitionRoutes,
   createDefinitionAssetHistory,
   createDrizzleDefinitionSkillsStore,
@@ -61,11 +62,8 @@ import {
   createWorkflowCapabilityRoutes,
   createWorkflowSkillPinRoutes,
   type CapabilityInventoryProvider,
-  AgentDefinitionDraftReferenceOutOfInventoryError,
-  AgentDefinitionDraftReplyUnparseableError,
   createMyraAgentDefinitionDrafting,
   isPlannerCreatedDefinitionName,
-  MyraAgentDefinitionDraftingUnavailableError,
   resolveMyraDefinitionIdFromDb,
   type InventoryAgent,
   type InventoryModel,
@@ -95,6 +93,7 @@ import {
   createDrizzleReactionStore,
   createDrizzleRoomMessageStore,
   createDrizzleThreadStore,
+  createDrizzleTurnMailCorrelationStore,
   createDrizzleWriteClaimStore,
   createHubChatPlatform,
   createNoopInferenceRoutes,
@@ -108,10 +107,13 @@ import {
   postRoomMessage,
   recordSourcesDigest,
   startWorkflowCommand,
-  sendWorkbenchMessage,
   settleConnectedService,
   workbenchLaunchPersistExtra,
 } from "@corbits/chat";
+import {
+  createDrizzleMailboxWriter,
+  type MailboxFanoutDeps,
+} from "@corbits/chat/mailbox-fanout";
 import type { RelaunchNoticePort } from "@corbits/chat";
 import { reportError } from "@corbits/error-sink";
 import type { FinalizedTurnToolCall } from "@corbits/turn-artifacts";
@@ -119,6 +121,7 @@ import { decodedOrNull } from "@corbits/url-path";
 import {
   createCryptoProviderCache,
   lookupFoldedRunReconnectKey,
+  tagCredentialCipher,
 } from "@corbits/folded-runs";
 import { createTopLevelRunRoutes } from "@corbits/run-scope";
 import {
@@ -187,8 +190,6 @@ import {
 import {
   deliveryWorkbenchRequiredForWorkflowName,
   isConversationalWorkflowName,
-  validateTriggerFieldsAtCreate,
-  workflowCatalogEntry,
   workflowDisplayName,
   workbenchTemplateLibraryEntries,
 } from "@workbench/templates";
@@ -197,19 +198,10 @@ import { webhookTriggerName } from "@corbits/connections/connect-github-setup";
 import { createTemplateBlockRoutes } from "./templates/template-block-routes";
 import {
   createWorkflowDetailRoute,
+  createScheduledWorkflowRoutes,
   renderWorkflowSourceTree,
   WORKFLOW_SOURCE_ENTRY,
 } from "@corbits/workflows";
-import {
-  createDrizzleRoutineStore,
-  createRoutineRoutes,
-  createRoutineTargetRoutes,
-  createWorkflowRoutineRoutes,
-  listRoutineTargets,
-  resolveLaunchableDefinition,
-  routine as routineTable,
-  routineRun as routineRunTable,
-} from "@corbits/routines";
 import {
   createSidecarProvisioner as createE2BSidecarProvisioner,
   readProvisionerConfig as readE2BProvisionerConfig,
@@ -224,11 +216,7 @@ import {
   createDrizzleWorkflowDeploySourceStore,
   withDeploySourceRecording,
 } from "@corbits/workflows";
-import {
-  FoldedRunFailedError,
-  FoldedRunTimedOutError,
-  runOneShotFoldedPrompt,
-} from "@corbits/folded-run-one-shot";
+import { runOneShotFoldedPrompt } from "@corbits/folded-run-one-shot";
 
 import {
   createEventCollectorRegistry,
@@ -237,8 +225,8 @@ import {
   createSessionService,
   createSidecarAllocationReconciler,
   createSidecarPluginRegistry,
+  createSidecarCredentialResolver,
   createSidecarRouter,
-  createSidecarTokenAuthenticator,
   createWorkflowAllocationService,
   createWorkflowDispatchService,
   DEFAULT_ASSET_REF,
@@ -267,6 +255,10 @@ import {
   createTenantGrantLister,
 } from "./grant-allowance";
 import { createDockerSidecarProvisioner } from "@corbits/docker-provisioner";
+import {
+  createProcessSidecarProvisioner,
+  readProcessProvisionerConfig,
+} from "@corbits/process-provisioner";
 import { getArtifact, writeArtifactVersion } from "@corbits/artifacts";
 import {
   createArtifactDbStore,
@@ -288,7 +280,11 @@ import {
   type PresenceRoomKey,
 } from "@corbits/presence";
 import { supportedCredentialProviders } from "@corbits/connections/credential-test";
-import { createGitWorkflowPusher } from "@corbits/seeding";
+import {
+  CATALOG_WORKFLOWS,
+  catalogWorkflowDeployableOnThisPin,
+  createGitWorkflowPusher,
+} from "@corbits/seeding";
 import { createHubAPI } from "@corbits/hub-api-client";
 import {
   createDrizzlePendingSeedStore,
@@ -365,6 +361,7 @@ import { upgradeWebSocket, websocket } from "hono/bun";
 import {
   CORBITS_TOOLS_REGISTRY,
   describeCorbitsToolPackages,
+  publishCorbitsToolsRegistry,
 } from "@corbits/tool-registry-publish";
 import {
   readHubConfig,
@@ -373,11 +370,16 @@ import {
 } from "./config";
 import type { SidecarProvisioner } from "@intx/hub-sessions";
 import { scheduleEnvProviderCredentialPlant } from "./env-credential-plant";
-import { createHubRoutineLauncher } from "./routine-launcher";
 import { withTurnPartWriteDefaults } from "./turn-part-content-default";
-import { createHubRunSummaryResolver } from "./routine-run-summary";
 import { createBootAssetWiring, REGISTRIES } from "./asset-service-factory";
-import { createRoutineScheduler } from "./routine-scheduler";
+import {
+  claimScheduleMinuteFromDb,
+  createWorkflowScheduler,
+  launchScheduledDefinitionFromDb,
+  listScheduledDefinitionsFromDb,
+  runNowScheduledDefinition,
+  type ScheduledDeliveryJoinDeps,
+} from "./workflow-scheduler";
 import { createToolGrantsForPins } from "./tool-grants";
 import { createMcpCredentialBindingsFor } from "./mcp-credential-bindings";
 import { reconcilePinnedToolPackagesAfterConnect } from "./connection-live-reconcile";
@@ -517,6 +519,18 @@ export function credentialCipherFrom(
 }
 
 /**
+ * Hub-boot mint of the process-wide credential cipher: build from
+ * config, then runtime-tag the result. Missing or wrong-shape input
+ * fails closed — the hub does not boot.
+ */
+export function hubCredentialCipher(
+  config: HubConfig,
+  log: ReturnType<typeof getLogger>,
+): CredentialCipher {
+  return tagCredentialCipher(credentialCipherFrom(config, log));
+}
+
+/**
  * Instantiates one configured sidecar-provisioner backend. This is the
  * extension point named in `.env.example` and `apps/hub/src/config.ts`:
  * a new backend gets a case here once its config member exists on
@@ -525,8 +539,30 @@ export function credentialCipherFrom(
 function buildSidecarProvisioner(
   config: SidecarProvisionerConfig,
   hubDataDir: string,
+  hubWebSocketUrl: string,
 ): SidecarProvisioner {
   switch (config.id) {
+    case "process":
+      // Same derivation as the other two backends: the hub-side
+      // allocation state lives under the hub's own data dir, and so do
+      // the per-allocation directories each spawned sidecar uses as its
+      // own SIDECAR_DATA_DIR.
+      return createProcessSidecarProvisioner({
+        config: readProcessProvisionerConfig({
+          env: {
+            ...(config.sidecarEntryPath === undefined
+              ? {}
+              : {
+                  PROCESS_PROVISIONER_SIDECAR_ENTRY: config.sidecarEntryPath,
+                }),
+            ...(config.runtimePath === undefined
+              ? {}
+              : { PROCESS_PROVISIONER_RUNTIME: config.runtimePath }),
+          },
+          dataDir: path.resolve(hubDataDir, "process-provisioner"),
+          hubWebSocketUrl,
+        }),
+      });
     case "docker":
       return createDockerSidecarProvisioner({
         config: {
@@ -574,9 +610,9 @@ export async function createHub(config: HubConfig) {
     bus: mailboxBus,
   });
   const log = getLogger(["hub", "auth"]);
-  // Built once and shared by every secret-at-rest seam in this
-  // composition root — see `credentialCipherFrom`'s own doc comment.
-  const credentialCipher = credentialCipherFrom(config, log);
+  // Built once, tagged, and shared by every secret-at-rest seam in this
+  // composition root — see `hubCredentialCipher`.
+  const credentialCipher = hubCredentialCipher(config, log);
 
   const auth = betterAuth({
     baseURL: config.baseUrl,
@@ -778,9 +814,20 @@ export async function createHub(config: HubConfig) {
     )) !== null;
   const pinnedPackageCredentialBindingsFor =
     createPinnedPackageCredentialBindingsFor(isConnectorConnected);
+  // One resolver serves both seams, exactly as @intx/hub-sessions's own
+  // reference host wires them: `resolve` turns a presented bearer token
+  // into a verified identity at the handshake, and `isCurrent`
+  // revalidates that identity at the registration, readiness, and
+  // routing boundaries. Without the second one the router falls back to
+  // its always-true default, and a provisioner-issued token stays
+  // accepted after its allocation was superseded or destroyed — which a
+  // process-provisioned sidecar reaches easily, since a child that
+  // outlives its allocation keeps reconnecting to the same hub.
+  const sidecarCredentials = createSidecarCredentialResolver({ db });
   const sidecarRouter = createSidecarRouter({
     hubPublicKey,
-    authenticateSidecar: createSidecarTokenAuthenticator({ db }),
+    authenticateSidecar: async ({ token }) => sidecarCredentials.resolve(token),
+    validateSidecarIdentity: sidecarCredentials.isCurrent,
     lookups,
   });
   // A finalized turn's persisted-artifact tool-call results become
@@ -835,8 +882,9 @@ export async function createHub(config: HubConfig) {
     // surviving loss loud (error-level cause, counted) instead of a
     // swallowed WRN.
     db: withTurnPartPersistGuard(withTurnPartWriteDefaults(db)),
-    onTurnFinalized: (agentAddress, turn) =>
-      artifactDeliveryHandlerRef.current?.(agentAddress, turn),
+    onTurnFinalized: (agentAddress, turn) => {
+      artifactDeliveryHandlerRef.current?.(agentAddress, turn);
+    },
     // Per-turn usage, emitted once when the collector finalizes a turn.
     onUsage: (_agentAddress, usage) => {
       void usageSink
@@ -943,20 +991,26 @@ export async function createHub(config: HubConfig) {
     }),
     workflowDeploySourceStore,
   );
+  const hubWebSocketUrl =
+    config.sidecarWebSocketUrl ??
+    `${config.baseUrl.replace(/^http/, "ws")}/api/sidecars/ws`;
   // Provisioner plugins are injected at the application composition
-  // boundary, mirroring @intx/hub-sessions's own reference wiring: the
-  // registry always exists, but ships with no provisioners (and no
-  // default) until SIDECAR_PROVISIONERS names one or more builds. A
-  // workbench's "run this workbench on its own sidecar" setting can then
-  // always write a tenant's exclusive `sidecarPlacement`; without any
-  // configured provisioner that placement simply fails closed at
-  // deployment time rather than silently falling back to the shared
-  // sidecar. Adding a new backend here is: implement `SidecarProvisioner`
-  // in its own package, add a case to `buildSidecarProvisioner`, and add
-  // its id to `apps/hub/src/config.ts`'s `SIDECAR_PROVISIONER_IDS`.
+  // boundary, mirroring @intx/hub-sessions's own reference wiring. An
+  // install that configures nothing registers the `process` backend
+  // (`@corbits/process-provisioner`) as the sole default, so a
+  // workbench's "run this workbench on its own sidecar" setting works on
+  // one server with no operator setup; `SIDECAR_PROVISIONERS` is the one
+  // variable that changes where sidecars run. Adding a new backend here
+  // is: implement `SidecarProvisioner` in its own package, add a case to
+  // `buildSidecarProvisioner`, and add its id to
+  // `apps/hub/src/config.ts`'s `SIDECAR_PROVISIONER_IDS`.
   const sidecarPlugins = createSidecarPluginRegistry({
     provisioners: config.sidecarProvisioners.map((provisionerConfig) =>
-      buildSidecarProvisioner(provisionerConfig, config.hubDataDir),
+      buildSidecarProvisioner(
+        provisionerConfig,
+        config.hubDataDir,
+        hubWebSocketUrl,
+      ),
     ),
     ...(config.defaultSidecarProvisionerId !== undefined
       ? { defaultProvisionerId: config.defaultSidecarProvisionerId }
@@ -982,9 +1036,6 @@ export async function createHub(config: HubConfig) {
       return row?.address ?? null;
     },
   });
-  const hubWebSocketUrl =
-    config.sidecarWebSocketUrl ??
-    `${config.baseUrl.replace(/^http/, "ws")}/api/sidecars/ws`;
   const sidecarAllocationReconciler = createSidecarAllocationReconciler({
     allocationStore: sidecarAllocationStore,
     plugins: sidecarPlugins,
@@ -1300,6 +1351,10 @@ export async function createHub(config: HubConfig) {
   // handle as every other Drizzle store above, never a second
   // connection.
   const writeClaims = createDrizzleWriteClaimStore(db);
+  // Durable dispatch-mail -> source-message correlation (CL-6314) — the
+  // record the reply path reads back to thread an agent's answer under
+  // the message that woke its turn. Same `db` handle, same reasoning.
+  const turnMailCorrelation = createDrizzleTurnMailCorrelationStore(db);
   // Mounted outside the tenant prefix — the sidecar reaches it as a
   // plain inference endpoint, never through tenant-scoped auth, the
   // same way it reaches a real provider's API. Pinned by the heartbeat
@@ -1335,6 +1390,17 @@ export async function createHub(config: HubConfig) {
   // notices has to be constructed first, since the sweep that triggers
   // most of them hangs off it.
   const relaunchNoticeRef: RelaunchNoticePort = {};
+  // One CryptoProviderCache for the whole hub process (CL-7284). Chat
+  // sendMail keys by workbench id; webhook, routine, and agent-definition
+  // drafting first-turn mail key by the launched run's instance id. New
+  // workbenches and run ids are `run_` (`generateId("workflowRun")`);
+  // older workbenches are `ins_` (`generateId("instance")`). They share a
+  // string shape — a second cache for the same id would mint a different
+  // signing key. generateId uniqueness keeps distinct entities from
+  // colliding; sharing the cache keeps the same entity from rotating keys
+  // across consumers. TTL-bounded by `createCryptoProviderCache` itself
+  // (CL-7223).
+  const cryptoProviders = createCryptoProviderCache();
   const chatPlatform = createHubChatPlatform({
     db,
     sessionService,
@@ -1345,6 +1411,7 @@ export async function createHub(config: HubConfig) {
     toolGrantsForPins,
     mcpCredentialBindingsFor,
     pinnedPackageCredentialBindingsFor,
+    cryptoProviders,
     // Chat residents are undeployed on idle again (see the comment above
     // this function): `chatIdleReapMs` (env-overridable via
     // `WORKBENCH_CHAT_IDLE_REAP_MS`, default 30 minutes) is
@@ -1418,6 +1485,8 @@ export async function createHub(config: HubConfig) {
     approvals: createApprovalStore(db),
     recordActivity: chatPlatform.recordActivity,
     claims: writeClaims,
+    threads: threadStore,
+    turnMailCorrelation,
     connectorRegistry: CONNECTOR_REGISTRY,
   };
   if (memoryHandle !== undefined) {
@@ -1505,6 +1574,9 @@ export async function createHub(config: HubConfig) {
     events: sidecarRouter.events,
     approvals: createApprovalStore(db),
     claims: writeClaims,
+    agentTurns,
+    threads: threadStore,
+    turnMailCorrelation,
     providerHealth: createProviderHealthPort(providerHealthStore),
     listConnectedProviders: (tenantId) => listConnectedProviders(db, tenantId),
   };
@@ -1569,29 +1641,13 @@ export async function createHub(config: HubConfig) {
     isConversationalAgentDefinition(definition) &&
     !isPlannerCreatedDefinitionName(definition.name);
 
-  /** The address a principal's own message is posted under: their id at
-   * their tenant's domain, the same shape every participant address
-   * carries. */
-  const senderAddressFor = async (
-    tenantId: string,
-    principalId: string,
-  ): Promise<string> => {
-    const row = await db.query.tenant.findFirst({
-      where: eq(tenantTable.id, tenantId),
-      columns: { domain: true },
-    });
-    if (row === undefined) {
-      throw new Error(`No tenant "${tenantId}" to derive a sender address in`);
-    }
-    return `${principalId}@${row.domain}`;
-  };
-
   const chatDeps: Parameters<typeof createChatRoutes>[0] = {
     store: chatStore,
     roomMessages,
     platform: chatPlatform,
     tenancy: chatTenancy,
     threads: threadStore,
+    turnMailCorrelation,
     agentTurns,
     turnTextSnapshot: (input) =>
       createDrizzleTurnTextSnapshotReader(db).read(input),
@@ -1631,6 +1687,40 @@ export async function createHub(config: HubConfig) {
     // messages to it.
     releaseAgentInstance: (address, reason) =>
       sidecarRouter.sendAgentUndeploy(address, reason),
+    // CL-7450: fans a sent human message into every human participant's
+    // `@corbits/mailbox` inbox, on the same `mailboxDb`/`mailboxBus` every
+    // other mailbox consumer in this file shares. `resolveKnownPrincipalIds`
+    // reads the control plane's own `principal` table directly (the
+    // authoritative "is this a real principal in this tenant" check),
+    // rather than `@corbits/mailbox`'s FK, so an unknown participant is a
+    // reported skip, not a database error deep in a transaction.
+    mailbox: {
+      writer: createDrizzleMailboxWriter(mailboxDb, mailboxBus),
+      resolveKnownPrincipalIds: async (tenantId, candidateIds) => {
+        if (candidateIds.length === 0) return new Set();
+        const rows = await db.query.principal.findMany({
+          where: (p, { eq: equals, and: andAll }) =>
+            andAll(equals(p.tenantId, tenantId), inArray(p.id, candidateIds)),
+          columns: { id: true },
+        });
+        return new Set(rows.map((row) => row.id));
+      },
+      // A row's Message-ID always addresses under the row's OWN tenant's
+      // domain, never the acting caller's — see `mailbox-fanout.ts`'s
+      // `MailboxFanoutDeps.resolveTenantDomain` doc comment. Same
+      // `tenant` lookup `workflowDeployer.deploy` above uses for the
+      // identical reason (an instance's trigger address, minted against
+      // its own tenant's domain).
+      resolveTenantDomain: async (tenantId) => {
+        const tenantRow = await db.query.tenant.findFirst({
+          where: eq(tenantTable.id, tenantId),
+        });
+        if (tenantRow === undefined) {
+          throw new Error(`no tenant "${tenantId}" to address a mailbox from`);
+        }
+        return tenantRow.domain;
+      },
+    } satisfies MailboxFanoutDeps,
   };
   app.route(`${TENANT_PREFIX}/chat`, createChatRoutes(chatDeps));
   // Myra's workflow-run chat surfaces (`@corbits/agent-directory-tools`'
@@ -1649,6 +1739,7 @@ export async function createHub(config: HubConfig) {
       publish: workbenchSubscribers.publish,
       turnQueue,
       turnCancellation,
+      turnMailCorrelation,
       authenticator: createWorkflowRunAuthenticator({ db }),
       tenancy: chatTenancy,
       sessionFor,
@@ -1673,6 +1764,7 @@ export async function createHub(config: HubConfig) {
     workbenchSubscribers,
     turnQueue,
     turnCancellation,
+    turnMailCorrelation,
   });
   // Tells the routine trigger popover whether a Slack-bound webhook
   // trigger is honestly offerable in this deployment — no session or
@@ -1733,6 +1825,45 @@ export async function createHub(config: HubConfig) {
         grantStore: chatGrantStore,
         conditionRegistry: chatConditionRegistry,
       }),
+    }),
+  );
+  const scheduledDeliveryJoinDeps: ScheduledDeliveryJoinDeps = {
+    deliveryWorkbenchRequired: deliveryWorkbenchRequiredForWorkflowName,
+    resolveDeliveryWorkbench: async (tenantId) => {
+      const rows = await chatStore.listWorkbenchSettings(tenantId);
+      const first = [...rows].sort((a, b) =>
+        a.workbenchId.localeCompare(b.workbenchId),
+      )[0];
+      return first?.workbenchId;
+    },
+    joinDeliveryWorkbench: (input) =>
+      joinRunParticipant({ store: chatStore }, input),
+  };
+  app.route(
+    `${TENANT_PREFIX}/workflows`,
+    createScheduledWorkflowRoutes({
+      db,
+      requireGrant: createRequireGrant({
+        grantStore: chatGrantStore,
+        conditionRegistry: chatConditionRegistry,
+      }),
+      catalogAssetNames: CATALOG_WORKFLOWS.map(
+        (workflow) => workflow.assetName,
+      ),
+      catalogWorkflowDeployable: catalogWorkflowDeployableOnThisPin,
+      runNow: async (args) =>
+        runNowScheduledDefinition(
+          { db, sidecarRouter, ...scheduledDeliveryJoinDeps },
+          {
+            tenantId: args.tenantId,
+            definitionId: args.definitionId,
+            principalId: args.principalId,
+            fromDomain: args.fromDomain,
+            content: args.content,
+            name: args.name,
+            definitionAssetId: args.assetId,
+          },
+        ),
     }),
   );
   // Run key identity diagnostics: read side of the append-only
@@ -2161,12 +2292,6 @@ export async function createHub(config: HubConfig) {
   // lives in our own schema rather than as any change to Interchange's
   // `grant` table.
   const repoReviewLeaseStore = createDrizzleRepoReviewLeaseStore(db);
-  // Shared by every folded-run first-turn mail send below (webhook
-  // triggers and routines alike) — a `CryptoProviderCache` is keyed by
-  // instance id, which is globally unique across this hub regardless of
-  // which caller minted the run, so one cache serves both without
-  // collision risk.
-  const foldedRunCryptoProviders = createCryptoProviderCache();
   app.route(
     `${TENANT_PREFIX}/webhook-triggers`,
     createWebhookTriggerRoutes({
@@ -2199,10 +2324,11 @@ export async function createHub(config: HubConfig) {
             assetService,
             sidecarRouter,
             eventCollectors,
+            credentialCipher,
             toolGrantsForPins,
             mcpCredentialBindingsFor,
             pinnedPackageCredentialBindingsFor,
-            cryptoProviderCache: foldedRunCryptoProviders,
+            cryptoProviderCache: cryptoProviders,
             launchMode: AGENT_SECTION_MODE,
             persistLaunch: workbenchLaunchPersistExtra,
             recordLaunchSources: ({ instanceId, sourcesDigest }) =>
@@ -2216,9 +2342,10 @@ export async function createHub(config: HubConfig) {
   // A connection completing through ANY door below — OAuth callback,
   // pasted key, MCP OAuth, keyless MCP preset — settles every room
   // waiting on that connector: the room's `connections/pending` entry
-  // clears (flipping the in-room connect card via `chat.settings`), and
-  // the host agent is woken via `dispatchTurn` without a forged
-  // signed-in-user timeline row.
+  // clears (flipping the in-room connect card via `chat.settings`).
+  // Rooms with `connections/pending` still wake the host agent via
+  // `dispatchTurn` without a forged signed-in-user timeline row;
+  // code-review template rooms are not woken on PAT settle.
   //
   // An inference provider's credential landing also re-checks every
   // live participant's deployed inference chain (CL-6687): a rotated
@@ -2776,34 +2903,7 @@ export async function createHub(config: HubConfig) {
   // so the Agent Directory and the shell's "Running" bands stop
   // deriving that exclusion client-side from a tenant's workbenches alone
   // (see `@corbits/folded-runs`'s `scope-routes.ts`, which a folded run
-  // with no workbench involved silently slipped past). The route's
-  // `feed=fires` mode (Insights, CL-6249) needs the one bridge
-  // `@corbits/folded-runs` cannot own itself — resolving a folded run id
-  // back to the routine that fired it — wired here, the one place in
-  // the hub that already depends on both packages. Plain `db` queries
-  // against `@corbits/routines`' own tables, not its `RoutineStore`:
-  // that store does not exist yet at this point in composition (built
-  // just below, for the routine grant/launcher wiring), and this lookup
-  // needs nothing from it beyond the two tables.
-  async function resolveRoutineFires(runIds: readonly string[]) {
-    const rows = await db
-      .select({
-        runId: routineRunTable.runId,
-        routineId: routineRunTable.routineId,
-        routineName: routineTable.name,
-      })
-      .from(routineRunTable)
-      .innerJoin(routineTable, eq(routineTable.id, routineRunTable.routineId))
-      .where(inArray(routineRunTable.runId, runIds));
-    const fires = new Map<string, { routineId: string; routineName: string }>();
-    for (const row of rows) {
-      fires.set(row.runId, {
-        routineId: row.routineId,
-        routineName: row.routineName,
-      });
-    }
-    return fires;
-  }
+  // with no workbench involved silently slipped past).
   app.route(
     `${TENANT_PREFIX}/top-level-runs`,
     createTopLevelRunRoutes({
@@ -2812,271 +2912,23 @@ export async function createHub(config: HubConfig) {
         grantStore: chatGrantStore,
         conditionRegistry: chatConditionRegistry,
       }),
-      resolveRoutineFires,
     }),
   );
 
-  // Routines: its own grant store (routines authorize against the
-  // `workflow-run:*` resource family, the same one native run routes
-  // use — see `@corbits/routines`' routes.ts), the launcher adapter
-  // that turns a routine's `launchRoutineRun` call into a real folded
-  // run via `@corbits/folded-runs` (routine-launcher.ts), and a run
-  // summary resolver so `GET /routines/:id/runs` reports each fire's
-  // real status instead of a bare run id.
-  const routineGrantStore = createGrantStore(db);
-  const routineStore = createDrizzleRoutineStore(db);
-  // The honest end-to-end delivery-destination rule: a workflow that
-  // never posts to a workbench (e.g. recurring-task, always delivering
-  // to its creator's Inbox — see @workbench/templates's
-  // `deliveryMode`) must never be forced to collect, or block on
-  // missing, a `deliveryWorkbenchId` it would just discard. An unknown
-  // definitionId (row missing, or its asset name isn't catalog-known)
-  // defaults to workbench-required — the safe, prior behavior.
-  async function routineDeliveryWorkbenchRequired(
-    tenantId: string,
-    definitionId: string,
-  ): Promise<boolean> {
-    const row = await db.query.workflowDefinition.findFirst({
-      where: and(
-        eq(workflowDefinition.id, definitionId),
-        eq(workflowDefinition.tenantId, tenantId),
-      ),
-      columns: { name: true },
-    });
-    if (row === undefined) return true;
-    return deliveryWorkbenchRequiredForWorkflowName(row.name);
-  }
-  // Create-time boundary check for a routine's stored `input` against
-  // its own definition's declared trigger fields. CL-6358: inputs bind
-  // at USE, never at creation — a required field with no value at all
-  // is never rejected here (`validateTriggerFieldsAtCreate` only
-  // checks a value the caller actually provided), only resolved
-  // further for an `"agent"`-kind field — that a provided value names
-  // a real conversational definition. An unknown definitionId or asset
-  // name passes here (its 404 comes from `definitionInTenant` instead);
-  // a definition with no declared trigger fields accepts any input, same
-  // as today.
-  async function routineInputValid(
-    tenantId: string,
-    definitionId: string,
-    input: Record<string, unknown>,
-  ): Promise<{ ok: true } | { ok: false; message: string }> {
-    const row = await db.query.workflowDefinition.findFirst({
-      where: and(
-        eq(workflowDefinition.id, definitionId),
-        eq(workflowDefinition.tenantId, tenantId),
-      ),
-      columns: { name: true },
-    });
-    if (row === undefined) return { ok: true };
-    const entry = workflowCatalogEntry(row.name);
-    if (entry?.triggerFields === undefined) return { ok: true };
-
-    const shapeResult = validateTriggerFieldsAtCreate(
-      entry.triggerFields,
-      input,
-    );
-    if (!shapeResult.ok) return shapeResult;
-
-    for (const field of entry.triggerFields) {
-      if (field.kind !== "agent") continue;
-      const value = input[field.key];
-      if (typeof value !== "string" || value === "") continue;
-      const agentRow = await db.query.workflowDefinition.findFirst({
-        where: and(
-          eq(workflowDefinition.id, value),
-          eq(workflowDefinition.tenantId, tenantId),
-        ),
-        columns: { name: true, status: true },
-      });
-      if (
-        agentRow === undefined ||
-        agentRow.status !== "deployed" ||
-        !isConversationalAgentDefinition(agentRow)
-      ) {
-        return {
-          ok: false,
-          message: `"${field.label}" must be a conversational agent`,
-        };
-      }
-    }
-    return { ok: true };
-  }
-
-  const routineLauncher = createHubRoutineLauncher({
-    db,
-    sessionService,
-    assetService,
-    sidecarRouter,
-    eventCollectors,
-    credentialCipher,
-    toolGrantsForPins,
-    mcpCredentialBindingsFor,
-    pinnedPackageCredentialBindingsFor,
-    cryptoProviderCache: foldedRunCryptoProviders,
-    joinDeliveryWorkbench: (input) =>
-      joinRunParticipant({ store: chatStore }, input),
-  });
-  // A `{kind: "webhook"}` routine trigger and the `@corbits/webhook-
-  // triggers` row it names are two views of one binding: the row still
-  // points at a `workflow_definition` row id (`workflowDefinitionId`),
-  // while a routine now names its stable `definitionAssetId` — so
-  // agreement means the definition row's own `assetId` equals the
-  // routine's `definitionAssetId`, not a direct id comparison.
-  const webhookTriggerInTenant = async (
-    tenantId: string,
-    webhookTriggerId: string,
-    definitionAssetId: string,
-  ): Promise<boolean> => {
-    const trigger = await webhookTriggerStore.get(tenantId, webhookTriggerId);
-    if (trigger === undefined) return false;
-    const definitionRow = await db.query.workflowDefinition.findFirst({
-      where: and(
-        eq(workflowDefinition.id, trigger.workflowDefinitionId),
-        eq(workflowDefinition.tenantId, tenantId),
-      ),
-      columns: { assetId: true },
-    });
-    return definitionRow?.assetId === definitionAssetId;
-  };
-  const routineWorkbenchNotice = {
-    postWorkbenchNotice: (input: {
-      tenantId: string;
-      workbenchId: string;
-      principalId: string;
-      text: string;
-    }) =>
-      senderAddressFor(input.tenantId, input.principalId)
-        .then((senderAddress) =>
-          sendWorkbenchMessage(
-            {
-              store: chatStore,
-              platform: chatPlatform,
-              roomMessages,
-              publish: workbenchSubscribers.publish,
-              turnQueue,
-              turnCancellation,
-            },
-            {
-              tenantId: input.tenantId,
-              principalId: input.principalId,
-              senderAddress,
-              workbenchId: input.workbenchId,
-              messageParts: [{ kind: "text", text: input.text }],
-            },
-          ),
-        )
-        .then(() => undefined),
-  };
-  // Routines routes own their `/routines` prefix, so mount at the
-  // tenant root (same pattern as a package that ships absolute
-  // resource paths) rather than under a second `/routines` segment.
-  app.route(
-    TENANT_PREFIX,
-    createRoutineRoutes({
-      store: routineStore,
-      workbenchNotice: routineWorkbenchNotice,
-      launcher: routineLauncher,
-      requireGrant: createRequireGrant({
-        grantStore: routineGrantStore,
-        conditionRegistry: chatConditionRegistry,
-      }),
-      // CL-7354: a create or retarget's resolved target must also
-      // authorize for the acting principal — same `grantStore` the grant
-      // check above already uses.
-      grantStore: routineGrantStore,
-      conditionRegistry: chatConditionRegistry,
-      // A run-now or a scheduled fire's result is a message into the
-      // routine's delivery workbench root timeline — never a pre-opened
-      // thread; see `@corbits/routines`' `RoutineLauncher` doc comment
-      // for the multi-message contract.
-      runSummaryResolver: createHubRunSummaryResolver(db),
-      resolveTarget: (tenantId, definitionAssetId) =>
-        resolveLaunchableDefinition({ db, tenantId, definitionAssetId }),
-      // A `{kind: "webhook"}` trigger's `webhookTriggerId` must resolve
-      // to a real `webhook_trigger` row in this tenant, pointed at the
-      // exact same workflow definition the routine itself runs — see
-      // `webhookTriggerValid`'s doc comment in
-      // `@corbits/routines`' routes.ts for why the two ids must agree.
-      webhookTriggerInTenant,
-      deliveryWorkbenchRequired: routineDeliveryWorkbenchRequired,
-      validateRoutineInput: routineInputValid,
-    }),
-  );
-  // Routine target discovery (CL-7351): the one list of deployed, frozen
-  // definitions a routine may reference, beside the platform's own
-  // `/workflows/definitions` listing but authorized per row for the
-  // acting principal — see `@corbits/routines`' targets.ts.
-  app.route(
-    `${TENANT_PREFIX}/workflows/targets`,
-    createRoutineTargetRoutes({
+  // Recurring auto-fire: `workflow-scheduler.ts` ticks authored, deployed
+  // definitions whose frozen projection carries a native ScheduleTrigger.
+  // This hub has no general job-runner today, so the loop is scoped to
+  // exactly that job rather than standing up a bespoke cron daemon as a
+  // hidden dependency. Every hub replica can safely run it: each native
+  // fire is claimed on `workflow_definition.schedule_claimed_minute`.
+  const workflowScheduler = createWorkflowScheduler({
+    listScheduledDefinitions: listScheduledDefinitionsFromDb(db),
+    claimScheduleMinute: claimScheduleMinuteFromDb(db),
+    launch: launchScheduledDefinitionFromDb({
       db,
-      grantStore: routineGrantStore,
-      conditionRegistry: chatConditionRegistry,
+      sidecarRouter,
+      ...scheduledDeliveryJoinDeps,
     }),
-  );
-  // Myra's own routine-management surface (`@corbits/routines-tools`'
-  // `routine_list`/`routine_create`/`routine_update`/`routine_run_now`):
-  // the workflow-run-authenticated counterpart to the tenant-session
-  // mount just above, reusing the exact same store/launcher/delivery
-  // ports — see `@corbits/routines`' `workflow-routine-routes.ts` for
-  // the deliberate self-tenant-scoped authorization decision this route
-  // enforces in place of `requireGrant`.
-  app.route(
-    "/api/workflow-routines",
-    createWorkflowRoutineRoutes({
-      store: routineStore,
-      launcher: routineLauncher,
-      workbenchNotice: routineWorkbenchNotice,
-      authenticator: createWorkflowRunAuthenticator({ db }),
-      resolveTarget: (tenantId, definitionAssetId) =>
-        resolveLaunchableDefinition({ db, tenantId, definitionAssetId }),
-      listTargets: (query) =>
-        listRoutineTargets(
-          {
-            db,
-            grantStore: routineGrantStore,
-            conditionRegistry: chatConditionRegistry,
-          },
-          query,
-        ),
-      // CL-7354: same authorization the tenant-session surface enforces
-      // above, for Myra's own create/retarget path.
-      grantStore: routineGrantStore,
-      conditionRegistry: chatConditionRegistry,
-      webhookTriggerInTenant,
-      deliveryWorkbenchRequired: routineDeliveryWorkbenchRequired,
-      // A routine created from inside a workbench delivers into that
-      // workbench: the creating run is a workbench participant, so its
-      // address (runId@domain) resolves straight to the workbench.
-      resolveRunWorkbench: async (tenantId, runId) => {
-        const row = await db.query.tenant.findFirst({
-          where: eq(tenantTable.id, tenantId),
-          columns: { domain: true },
-        });
-        if (row === undefined) return undefined;
-        const hit = await chatStore.findWorkbenchByParticipantAddress(
-          tenantId,
-          `${runId}@${row.domain}`,
-        );
-        return hit?.workbenchId;
-      },
-      validateRoutineInput: routineInputValid,
-    }),
-  );
-  // Recurring auto-fire: a minimal in-process poller (routine-scheduler.ts)
-  // over `@corbits/routines`' own `fireScheduledRoutine` — this hub has no
-  // general job-runner today, so this loop is scoped to exactly one job
-  // (fire due routines) rather than standing up a bespoke cron daemon as a
-  // hidden dependency. Every hub replica can safely run this poller: each
-  // fire is claimed with a conditional update on the routine's persisted
-  // `nextFireAt` before anything launches, so two replicas racing the same
-  // fire never both win, and a fire that falls due while every replica is
-  // down is caught up (not lost) the next time any of them polls.
-  const routineScheduler = createRoutineScheduler({
-    store: routineStore,
-    launcher: routineLauncher,
-    deliveryWorkbenchRequired: routineDeliveryWorkbenchRequired,
     ...(config.routineSchedulerPollIntervalMs !== undefined
       ? { pollIntervalMs: config.routineSchedulerPollIntervalMs }
       : {}),
@@ -3218,117 +3070,39 @@ export async function createHub(config: HubConfig) {
     listModels: listMyraModels,
   };
 
-  // A separate `CryptoProviderCache` from `foldedRunCryptoProviders`
-  // above: an agent-definition drafting one-shot run's instance id has
-  // nothing to do with a folded run's, so a separate cache keeps them
-  // from ever contending over the same key space.
-  const agentDefinitionDraftingCryptoProviders = createCryptoProviderCache();
-
   // The create-agent panel's "Describe" step (CL-6074): a real one-shot
   // Myra call that proposes a starting system prompt/tool pins/skills
   // from a name + plain-language purpose, offering her the same
   // inventory `capabilityInventory` above reads through. Never deploys
   // on its own — the panel submits the validated draft through the
-  // ordinary create-agent-definition path once the person confirms. This
-  // route is hand-wired here rather than through a factory the package
-  // exports, since agent-directory's own route factories are each scoped
-  // to a narrower concern.
-  const CreateAgentDefinitionDraftBody = type({
-    name: "string > 0",
-    "purpose?": "string > 0",
-  });
-  const agentDefinitionDraftingInFlightPrincipals = new Set<string>();
-  function isAgentDefinitionDraftingFailure(err: unknown): boolean {
-    return (
-      err instanceof MyraAgentDefinitionDraftingUnavailableError ||
-      err instanceof FoldedRunTimedOutError ||
-      err instanceof FoldedRunFailedError ||
-      err instanceof AgentDefinitionDraftReplyUnparseableError ||
-      err instanceof AgentDefinitionDraftReferenceOutOfInventoryError
-    );
-  }
-  const plannerRoutes = new Hono<TenantEnv>();
-  plannerRoutes.post(
-    "/agent-definitions/draft",
-    createRequireGrant({
+  // ordinary create-agent-definition path once the person confirms.
+  // Failure copy is the package route's `makeErrorEnvelope` +
+  // `reportError` (CL-6749), not a local `{ code, message }` body.
+  const plannerRoutes = createAgentDefinitionDraftRoutes({
+    requireGrant: createRequireGrant({
       grantStore: chatGrantStore,
       conditionRegistry: chatConditionRegistry,
-    })("workflow-definition:*", "create"),
-    async (c) => {
-      const body = CreateAgentDefinitionDraftBody(
-        await c.req.json().catch(() => undefined),
-      );
-      if (body instanceof type.errors) {
-        return c.json(
-          {
-            error: {
-              code: "bad_request",
-              message: `This couldn't be read: ${body.summary}`,
-            },
-          },
-          400,
-        );
-      }
-
-      const tenant = c.get("tenant");
-      const principal = c.get("principal");
-
-      if (agentDefinitionDraftingInFlightPrincipals.has(principal.id)) {
-        return c.json(
-          {
-            error: {
-              code: "dispatch_in_progress",
-              message: "Myra is already drafting your last agent.",
-            },
-          },
-          409,
-        );
-      }
-      agentDefinitionDraftingInFlightPrincipals.add(principal.id);
-      try {
-        const draft = await createMyraAgentDefinitionDrafting({
-          resolveMyraDefinitionId: (tenantId) =>
-            resolveMyraDefinitionIdFromDb(db, tenantId),
-          runner: {
-            run: (runnerInput) =>
-              runOneShotFoldedPrompt(
-                {
-                  foldedRuns: oneShotFoldedRunsDeps,
-                  events: sidecarRouter.events,
-                  cryptoProviders: agentDefinitionDraftingCryptoProviders,
-                  undeploy: (address, reason) =>
-                    sidecarRouter.sendAgentUndeploy(address, reason),
-                },
-                runnerInput,
-              ),
-          },
-          inventorySources: plannerInventorySources,
-        }).propose({
-          tenantId: tenant.id,
-          principalId: principal.id,
-          name: body.name,
-          ...(body.purpose !== undefined ? { purpose: body.purpose } : {}),
-        });
-        return c.json({ draft }, 201);
-      } catch (err) {
-        if (isAgentDefinitionDraftingFailure(err)) {
-          return c.json(
-            {
-              error: {
-                code: "drafting_failed",
-                message:
-                  "Myra couldn't draft a starting prompt for that. Write one yourself, or try again.",
+    }),
+    draftAgentDefinition: (input) =>
+      createMyraAgentDefinitionDrafting({
+        resolveMyraDefinitionId: (tenantId) =>
+          resolveMyraDefinitionIdFromDb(db, tenantId),
+        runner: {
+          run: (runnerInput) =>
+            runOneShotFoldedPrompt(
+              {
+                foldedRuns: oneShotFoldedRunsDeps,
+                events: sidecarRouter.events,
+                cryptoProviders,
+                undeploy: (address, reason) =>
+                  sidecarRouter.sendAgentUndeploy(address, reason),
               },
-            },
-            422,
-          );
-        }
-        throw err;
-      } finally {
-        agentDefinitionDraftingInFlightPrincipals.delete(principal.id);
-      }
-    },
-  );
+              runnerInput,
+            ),
+        },
+        inventorySources: plannerInventorySources,
+      }).propose(input),
+  });
   app.route(`${TENANT_PREFIX}/planner`, plannerRoutes);
 
   // The sanctioned path for a workflow run to reach the memory plane
@@ -3389,6 +3163,7 @@ export async function createHub(config: HubConfig) {
     sessionFor,
     log: (line) => log.info`${line}`,
     logError: (line) => log.error`${line}`,
+    publishToolRegistryFn: publishCorbitsToolsRegistry,
   });
   benchProvisioner.start();
 
@@ -3629,9 +3404,25 @@ export async function createHub(config: HubConfig) {
       if (sidecarAllocationReconciliationTimer !== undefined) {
         clearTimeout(sidecarAllocationReconciliationTimer);
       }
+      // Retire the relaunch sweep's series so any in-flight pass's
+      // `.finally` reschedule is a no-op, and cancel whatever pass is
+      // currently pending. Without this the sweep outlives `close()`
+      // entirely (it's only ever re-armed, never torn down) and keeps
+      // querying `chat.workbench_launch` on a timer this function is
+      // about to end — including, once `close()` below tears down the
+      // db pool, querying a pool that's already shut down. In a test
+      // suite that boots many hubs back to back (e.g.
+      // slack-tag-mount.test.ts, CL-7453) those leaked timers pile up
+      // across the whole `bun test` process and contend with later
+      // tests' own boots for Postgres connections, which is what
+      // surfaced as `chat·relaunch-sweep: relaunch sweep pass failed:
+      // Failed query: select ... from chat.workbench_launch` and an
+      // intermittent test timeout.
+      relaunchSweepSeries += 1;
+      clearTimeout(relaunchSweepTimer);
       envCredentialPlant.stop();
       chatOrchestrator.dispose();
-      routineScheduler.stop();
+      workflowScheduler.stop();
       credentialExpirySweep.stop();
       inboxUnsnoozeSweep.stop();
       benchProvisioner.stop();

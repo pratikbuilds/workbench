@@ -9,8 +9,11 @@
 //
 // OAuth connects navigate the whole page to the hosted start route and
 // return to this room; the card re-reads its state on remount, and the
-// hub's connect-settling hook posts the in-room resume message — so no
-// client-side event fold is needed for the flip.
+// hub's connect-settling hook posts the in-room resume message. A
+// credential completed without leaving the room (another tab, the
+// Plugins page) publishes `chat.settings`; ChatWorkspace parses that
+// event and calls `notifySettingsChanged` so a mounted card flips
+// without remounting (CL-6476).
 import type {
   ConnectServiceActions,
   ConnectServiceQuery,
@@ -101,6 +104,18 @@ export function createChatConnectServiceActions(
     };
   }
 
+  async function refreshSubscribed(): Promise<void> {
+    await Promise.all(
+      [...listeners.keys()].map(async (connectorId) => {
+        const query = await readState(connectorId).catch(() => ({
+          kind: "error" as const,
+          message: "Couldn't check this connection. Try again.",
+        }));
+        fanOut(connectorId, query);
+      }),
+    );
+  }
+
   return {
     getConnectState(connectorId) {
       return readState(connectorId).catch(() => ({
@@ -115,6 +130,9 @@ export function createChatConnectServiceActions(
       return () => {
         set.delete(onUpdate);
       };
+    },
+    notifySettingsChanged() {
+      return refreshSubscribed();
     },
     async connect(connectorId) {
       const slug = bareConnectorId(connectorId);

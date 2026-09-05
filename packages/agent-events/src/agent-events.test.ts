@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   connectorReplyContent,
   inferenceDoneBlocks,
+  messageRunBracket,
   messageRunEnded,
   toolDoneResult,
 } from "./agent-events";
@@ -186,5 +187,55 @@ describe("messageRunEnded", () => {
   test("any other event reads as no terminal signal", () => {
     expect(messageRunEnded({ type: "connector.reply" })).toBeUndefined();
     expect(messageRunEnded(undefined)).toBeUndefined();
+  });
+});
+
+describe("messageRunBracket", () => {
+  test("reads the identity off a bracket open", () => {
+    expect(
+      messageRunBracket({
+        type: "message.run.started",
+        seq: 1,
+        data: {
+          messageId: "<mail_1@ten1.workbench.test>",
+          messageRunId: "run_1",
+          receivedAt: 123,
+        },
+      }),
+    ).toEqual({
+      messageId: "<mail_1@ten1.workbench.test>",
+      messageRunId: "run_1",
+    });
+  });
+
+  test("reads the identity off a bracket close", () => {
+    expect(
+      messageRunBracket({
+        type: "message.run.ended",
+        seq: 2,
+        data: {
+          messageRunId: "run_1",
+          messageId: "<mail_1@ten1.workbench.test>",
+          status: "completed",
+        },
+      }),
+    ).toEqual({
+      messageId: "<mail_1@ten1.workbench.test>",
+      messageRunId: "run_1",
+    });
+  });
+
+  test("any other event, or a bracket missing its ids, reads as no bracket", () => {
+    expect(messageRunBracket({ type: "connector.reply" })).toBeUndefined();
+    expect(messageRunBracket(undefined)).toBeUndefined();
+    expect(
+      messageRunBracket({ type: "message.run.started", data: {} }),
+    ).toBeUndefined();
+    expect(
+      messageRunBracket({
+        type: "message.run.ended",
+        data: { messageId: "<mail_1@ten1.workbench.test>" },
+      }),
+    ).toBeUndefined();
   });
 });

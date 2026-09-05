@@ -26,6 +26,7 @@ import {
   readDefinitionProjection,
   readFoldedBody,
   sendFoldedMailWithRetry,
+  tagCredentialCipher,
   type FoldedRunMode,
   type FoldedRunsDeps,
   type LaunchFoldedRunParams,
@@ -34,7 +35,7 @@ import {
 import type { DB } from "@intx/db";
 import { tenant as tenantTable, workflowDefinition } from "@intx/db/schema";
 import { generateId } from "@intx/hub-common";
-import { formatRunAddress } from "@intx/types";
+import { formatRunAddress, type CredentialCipher } from "@intx/types";
 
 import { renderInputTemplate } from "./mapping";
 import type { WebhookTriggerRow } from "./schema";
@@ -42,6 +43,14 @@ import type { WebhookTriggerRow } from "./schema";
 export type LaunchWebhookTriggerDeps = FoldedRunsDeps & {
   db: DB["db"];
   cryptoProviderCache: CryptoProviderCache;
+  /**
+   * Decrypts catalog secrets when the launched run resolves inference
+   * sources. Required: a webhook launch always goes through
+   * `launchFoldedRun`, and omitting the cipher would hand ciphertext to
+   * the provider as an API key. Tagged at entry — missing or wrong-shape
+   * input fails closed before any launch work.
+   */
+  credentialCipher: CredentialCipher;
   /**
    * The shape the launched run deploys as — the host wires this to
    * `@corbits/chat`'s `AGENT_SECTION_MODE`, the same `onTrigger`
@@ -97,7 +106,10 @@ export async function launchWebhookTrigger(
   trigger: WebhookTriggerRow,
   payload: unknown,
 ): Promise<LaunchedWebhookTrigger> {
-  const definitionRow = await deps.db.query.workflowDefinition.findFirst({
+  const credentialCipher = tagCredentialCipher(deps.credentialCipher);
+  const launchDeps = { ...deps, credentialCipher };
+
+  const definitionRow = await launchDeps.db.query.workflowDefinition.findFirst({
     where: and(
       eq(workflowDefinition.id, trigger.workflowDefinitionId),
       eq(workflowDefinition.tenantId, trigger.tenantId),
@@ -122,14 +134,17 @@ export async function launchWebhookTrigger(
     );
   }
 
-  const tenantRow = await deps.db.query.tenant.findFirst({
+  const tenantRow = await launchDeps.db.query.tenant.findFirst({
     where: eq(tenantTable.id, trigger.tenantId),
   });
   if (tenantRow === undefined) {
     throw new Error(`no tenant "${trigger.tenantId}"`);
   }
 
-  const projection = await readDefinitionProjection(deps.db, definitionRow);
+  const projection = await readDefinitionProjection(
+    launchDeps.db,
+    definitionRow,
+  );
   const foldedBody = readFoldedBody(
     projection,
     definitionRow.grantRequirements,
@@ -144,28 +159,31 @@ export async function launchWebhookTrigger(
   const instanceId = generateId("workflowRun");
   const triggerAddress = formatRunAddress(instanceId, tenantRow.domain);
 
-  const launched = await launchFoldedRun(deps, {
+  const launched = await launchFoldedRun(launchDeps, {
     tenantId: trigger.tenantId,
     instanceId,
     triggerAddress,
     definitionId: trigger.workflowDefinitionId,
     foldedBody,
     launchLabel: `webhook trigger "${trigger.name}"`,
-    mode: deps.launchMode,
-    persistExtra: deps.persistLaunch({
+    mode: launchDeps.launchMode,
+    persistExtra: launchDeps.persistLaunch({
       tenantId: trigger.tenantId,
       instanceId,
       foldedBody,
     }),
   });
-  await deps.recordLaunchSources({
+  await launchDeps.recordLaunchSources({
     instanceId,
     sourcesDigest: launched.sourcesDigest,
   });
 
   const content = renderInputTemplate(trigger.inputTemplate, payload);
-  const cryptoProvider = await deps.cryptoProviderCache.get(instanceId);
-  const result = await sendFoldedMailWithRetry(deps, {
+  // Keyed by the launched run's instance id (`generateId("workflowRun")`),
+  // the same string shape chat uses for workbench ids — share the host's
+  // process-wide cache so those lookups cannot mint different keys.
+  const cryptoProvider = await launchDeps.cryptoProviderCache.get(instanceId);
+  const result = await sendFoldedMailWithRetry(launchDeps, {
     tenantId: trigger.tenantId,
     sessionId: launched.sessionId,
     agentAddress: triggerAddress,

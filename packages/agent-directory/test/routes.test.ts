@@ -16,17 +16,24 @@ import type { AssetService } from "@intx/hub-sessions";
 import type { DB } from "@intx/db";
 
 import { SkillRegistryError } from "@corbits/skills";
+import { CORBITS_TOOLS_REGISTRY } from "@corbits/tool-registry-publish";
 
 import {
   buildAgentDefinitionWorkflow,
   serializeAgentDefinitionWorkflow,
+  withAgentToolPackagePin,
 } from "../src/agent-workflow";
 import {
   agentDefinitionSourceTree,
   AGENT_DEFINITION_ENTRY_PATH,
+  readAgentDefinitionWorkflowJson,
 } from "../src/definition-asset";
 import { createAgentDefinitionRoutes } from "../src/routes";
 import type { PinnedSkillIndexResolver } from "../src/routes";
+import {
+  createWorkflowSkillPinRoutes,
+  type WorkflowRunAuthenticator,
+} from "../src/workflow-skill-pin-routes";
 import {
   createInMemoryDefinitionSkillsStore,
   type DefinitionSkillsStore,
@@ -95,6 +102,36 @@ const PRINCIPAL = {
   updatedAt: new Date(),
 };
 
+/** `resolvePinnedVersion`'s `resolveAssetByName` lookup, stubbed for tests
+ * that create/pin a tool package: a tenant-owned `corbits-tools`
+ * package-registry asset, so `db.query.tenant.findFirst`/`db.query.asset.findFirst`
+ * resolve exactly like the real ancestor-chain walk would for a
+ * single-tenant (no-parent) fixture. */
+const CORBITS_TOOLS_REGISTRY_ASSET = {
+  id: "ast_corbits_tools",
+  tenantId: TENANT.id,
+  kind: "package-registry" as const,
+  name: CORBITS_TOOLS_REGISTRY,
+  displayName: CORBITS_TOOLS_REGISTRY,
+  creatorPrincipalId: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
+/** Merges the `db.query.tenant`/`db.query.asset` lookups
+ * `resolvePinnedVersion` needs into a fake db's `query` object, leaving
+ * every other query untouched. */
+function withToolPackageRegistryQueries<T extends { query: object }>(db: T): T {
+  return {
+    ...db,
+    query: {
+      ...db.query,
+      tenant: { findFirst: async () => ({ parentId: null }) },
+      asset: { findFirst: async () => CORBITS_TOOLS_REGISTRY_ASSET },
+    },
+  };
+}
+
 function fakeAssetService(overrides: Partial<AssetService> = {}): AssetService {
   return {
     createAsset: () => {
@@ -109,6 +146,37 @@ function fakeAssetService(overrides: Partial<AssetService> = {}): AssetService {
     },
     ...overrides,
   };
+}
+
+/** An asset whose reads observe writes — the race two concurrent
+ * capability-adds hit is only visible when the second read can see the
+ * first write, or when both reads share a snapshot the later write then
+ * clobbers. */
+function liveDefinitionAsset(initial: Uint8Array): AssetService {
+  let current = initial;
+  return fakeAssetService({
+    readAssetBlob: async () => {
+      await Promise.resolve();
+      return current;
+    },
+    populateAsset: async (params) => {
+      const entry = params.tree.files[AGENT_DEFINITION_ENTRY_PATH];
+      if (typeof entry !== "string") {
+        throw new Error("populateAsset wrote no entry module");
+      }
+      await Promise.resolve();
+      current = new TextEncoder().encode(entry);
+      return { commitSha: "deadbeef" };
+    },
+    // Every tool package a `liveDefinitionAsset` test pins by name, at a
+    // fixed version — enough for `resolvePinnedVersion` to resolve
+    // without each concurrent-write test needing its own tarball list.
+    listAssetBlobs: () =>
+      Promise.resolve([
+        "corbits-github-tools-3.1.0.tgz",
+        "corbits-memory-tools-1.4.0.tgz",
+      ]),
+  });
 }
 
 /** The entry module a stored definition's asset carries, so the PUT
@@ -570,7 +638,7 @@ test("a create request without skills records an empty skills list", async () =>
   expect(await skillsStore.getSkills("ast_1")).toEqual([]);
 });
 
-test("a create request with toolPackagePins pins each named package at version *", async () => {
+test("a create request with toolPackagePins pins each named package at its highest published version", async () => {
   let writtenFiles: Record<string, string | Uint8Array> | undefined;
   const app = buildApp(
     fakeAssetService({
@@ -589,8 +657,13 @@ test("a create request with toolPackagePins pins each named package at version *
         writtenFiles = params.tree.files;
         return Promise.resolve({ commitSha: "deadbeef" });
       },
+      listAssetBlobs: () =>
+        Promise.resolve([
+          "corbits-memory-tools-1.4.0.tgz",
+          "corbits-web-search-tools-2.1.0.tgz",
+        ]),
     }),
-    fakeCreateDb(),
+    withToolPackageRegistryQueries(fakeCreateDb()),
   );
   const response = await post(app, {
     name: "Scout",
@@ -601,8 +674,8 @@ test("a create request with toolPackagePins pins each named package at version *
   expect(response.status).toBe(201);
   const workflowJson = definitionFrom(writtenFiles);
   expect(pinsFrom(workflowJson)).toEqual([
-    { name: "@corbits/memory-tools", version: "*" },
-    { name: "@corbits/web-search-tools", version: "*" },
+    { name: "@corbits/memory-tools", version: "1.4.0" },
+    { name: "@corbits/web-search-tools", version: "2.1.0" },
   ]);
 });
 
@@ -992,6 +1065,70 @@ test("PUT /:definitionId writes the new system prompt in a single source-tree co
   });
 });
 
+// CL-7389: PUT /:definitionId only rewrites the name and system prompt —
+// it must never re-touch tool-package pins, so a tarball that lands in
+// the registry after this definition deployed never silently moves an
+// already-deployed specialist's stored pin.
+test("PUT instructions after a newer tarball lands keeps the stored pin version", async () => {
+  const pinned = withAgentToolPackagePin(
+    serializeAgentDefinitionWorkflow(
+      buildAgentDefinitionWorkflow({
+        handle: "research-buddy",
+        tenantDomain: TENANT.domain,
+        description: "",
+        systemPrompt: "You are a careful research assistant.",
+      }),
+    ),
+    { name: "@corbits/memory-tools", version: "1.4.0" },
+  );
+  const tree = agentDefinitionSourceTree({
+    handle: "research-buddy",
+    workflowJson: pinned,
+  });
+  let current = new TextEncoder().encode(tree[AGENT_DEFINITION_ENTRY_PATH]);
+  let writtenEntry: string | undefined;
+  let listCalls = 0;
+  const app = buildApp(
+    fakeAssetService({
+      readAssetBlob: async () => current,
+      populateAsset: (params) => {
+        const entry = params.tree.files[AGENT_DEFINITION_ENTRY_PATH];
+        if (typeof entry !== "string") {
+          throw new Error("populateAsset wrote no entry module");
+        }
+        writtenEntry = entry;
+        current = new TextEncoder().encode(entry);
+        return Promise.resolve({ commitSha: "deadbeef" });
+      },
+      // A newer tarball has landed since this definition deployed. The
+      // PUT below must never look at it.
+      listAssetBlobs: () => {
+        listCalls++;
+        return Promise.resolve([
+          "corbits-memory-tools-1.4.0.tgz",
+          "corbits-memory-tools-1.5.0.tgz",
+        ]);
+      },
+    }),
+    fakeInstructionsDb({
+      id: "def_1",
+      assetId: "ast_1",
+      name: "research-buddy",
+    }),
+  );
+  const response = await put(app, "/def_1", {
+    name: "Research Buddy",
+    systemPrompt: "You are now a blunt, no-nonsense researcher.",
+  });
+  expect(response.status).toBe(200);
+  expect(listCalls).toBe(0);
+  expect(
+    pinsFrom(
+      definitionFrom({ [AGENT_DEFINITION_ENTRY_PATH]: writtenEntry ?? "" }),
+    ),
+  ).toEqual([{ name: "@corbits/memory-tools", version: "1.4.0" }]);
+});
+
 test("PUT /:definitionId 404s for an unknown definition", async () => {
   const app = buildApp(fakeAssetService(), fakeInstructionsDb(undefined));
   const response = await put(app, "/def_missing", {
@@ -1374,11 +1511,11 @@ test("a create request indexes its pinned skills into the stored system prompt",
   const prompt = promptFrom(workflowJson);
   expect(prompt.startsWith("You are a careful research assistant.")).toBe(true);
   expect(prompt).toContain("- web-research: What web-research does.");
-  expect(prompt).toContain("load_skill");
-  // The prompt tells the model to call `load_skill`, so the bundle that
+  expect(prompt).toContain("skills_load");
+  // The prompt tells the model to call `skills_load`, so the bundle that
   // provides it must be pinned on the same push.
   expect(pinsFrom(workflowJson)).toEqual([
-    { name: "@corbits/tools-skills", version: "0.0.1" },
+    { name: "@corbits/tools-skills", version: "0.0.2" },
   ]);
 });
 
@@ -1616,12 +1753,15 @@ test("adding a tool package pin merges it into the definition in one commit, nam
         writtenMessage = params.tree.message;
         return Promise.resolve({ commitSha: "deadbeef" });
       },
+      listAssetBlobs: () => Promise.resolve(["corbits-github-tools-3.1.0.tgz"]),
     }),
-    fakeInstructionsDb({
-      id: "def_1",
-      assetId: "ast_1",
-      name: "research-buddy",
-    }),
+    withToolPackageRegistryQueries(
+      fakeInstructionsDb({
+        id: "def_1",
+        assetId: "ast_1",
+        name: "research-buddy",
+      }),
+    ),
   );
   const response = await postTo(app, "/def_1/capabilities", {
     kind: "toolPackage",
@@ -1630,14 +1770,85 @@ test("adding a tool package pin merges it into the definition in one commit, nam
   expect(response.status).toBe(200);
   expect(Object.keys(writtenFiles ?? {})).toEqual(SOURCE_TREE_PATHS);
   expect(pinsFrom(definitionFrom(writtenFiles))).toEqual([
-    { name: "@corbits/github-tools", version: "*" },
+    { name: "@corbits/github-tools", version: "3.1.0" },
   ]);
   expect(writtenMessage).toBe("Add @corbits/github-tools to research-buddy");
   const body = (await response.json()) as {
     toolPackagePins: { name: string; version: string }[];
   };
   expect(body.toolPackagePins).toEqual([
-    { name: "@corbits/github-tools", version: "*" },
+    { name: "@corbits/github-tools", version: "3.1.0" },
+  ]);
+});
+
+test("re-adding an already-pinned tool package keeps its stored version after a newer tarball lands", async () => {
+  let writtenFiles: Record<string, string | Uint8Array> | undefined;
+  let writtenMessage: string | undefined;
+  const app = buildApp(
+    fakeAssetService({
+      readAssetBlob: readAssetBlobFor(
+        new TextEncoder().encode(
+          agentDefinitionSourceTree({
+            handle: "research-buddy",
+            workflowJson: withAgentToolPackagePin(
+              serializeAgentDefinitionWorkflow(
+                buildAgentDefinitionWorkflow({
+                  handle: "research-buddy",
+                  tenantDomain: TENANT.domain,
+                  description: "",
+                  systemPrompt: "You are a careful research assistant.",
+                }),
+              ),
+              { name: "@corbits/memory-tools", version: "1.4.0" },
+            ),
+          })[AGENT_DEFINITION_ENTRY_PATH] as string,
+        ),
+      ),
+      populateAsset: (params) => {
+        writtenFiles = params.tree.files;
+        writtenMessage = params.tree.message;
+        return Promise.resolve({ commitSha: "deadbeef" });
+      },
+      // A newer tarball has landed since the pin was first added — this
+      // re-add must not bump onto it.
+      listAssetBlobs: () =>
+        Promise.resolve([
+          "corbits-memory-tools-1.4.0.tgz",
+          "corbits-memory-tools-1.5.0.tgz",
+        ]),
+    }),
+    withToolPackageRegistryQueries(
+      fakeInstructionsDb({
+        id: "def_1",
+        assetId: "ast_1",
+        name: "research-buddy",
+      }),
+    ),
+    allowAllRequireGrant,
+    fakeHistory(),
+    {
+      resolve: () =>
+        Promise.resolve({
+          toolPackages: [{ name: "@corbits/memory-tools" }],
+          skills: [],
+          models: [],
+        }),
+    },
+  );
+  const response = await postTo(app, "/def_1/capabilities", {
+    kind: "toolPackage",
+    name: "@corbits/memory-tools",
+  });
+  expect(response.status).toBe(200);
+  expect(pinsFrom(definitionFrom(writtenFiles))).toEqual([
+    { name: "@corbits/memory-tools", version: "1.4.0" },
+  ]);
+  expect(writtenMessage).not.toContain("Add");
+  const body = (await response.json()) as {
+    toolPackagePins: { name: string; version: string }[];
+  };
+  expect(body.toolPackagePins).toEqual([
+    { name: "@corbits/memory-tools", version: "1.4.0" },
   ]);
 });
 
@@ -1805,4 +2016,222 @@ test("capabilities route 404s for an unknown definition", async () => {
     canonicalName: "anthropic/claude-sonnet",
   });
   expect(response.status).toBe(404);
+});
+
+test("two concurrent capability-adds on the same definition both land", async () => {
+  const inventory: CapabilityInventoryProvider = {
+    resolve: () =>
+      Promise.resolve({
+        toolPackages: [
+          { name: "@corbits/github-tools" },
+          { name: "@corbits/memory-tools" },
+        ],
+        skills: [{ name: "research" }],
+        models: [{ canonicalName: "anthropic/claude-sonnet" }],
+      }),
+  };
+  const assetService = liveDefinitionAsset(storedDefinitionBytes());
+  const app = buildApp(
+    assetService,
+    withToolPackageRegistryQueries(
+      fakeInstructionsDb({
+        id: "def_1",
+        assetId: "ast_1",
+        name: "research-buddy",
+      }),
+    ),
+    allowAllRequireGrant,
+    fakeHistory(),
+    inventory,
+  );
+
+  const [first, second] = await Promise.all([
+    postTo(app, "/def_1/capabilities", {
+      kind: "toolPackage",
+      name: "@corbits/github-tools",
+    }),
+    postTo(app, "/def_1/capabilities", {
+      kind: "toolPackage",
+      name: "@corbits/memory-tools",
+    }),
+  ]);
+  expect(first.status).toBe(200);
+  expect(second.status).toBe(200);
+
+  const workflowJson = await readAgentDefinitionWorkflowJson(
+    assetService,
+    "ast_1",
+  );
+  const names = pinsFrom(workflowJson)
+    .map((pin) => pin.name)
+    .toSorted();
+  expect(names).toEqual(["@corbits/github-tools", "@corbits/memory-tools"]);
+});
+
+test("concurrent PUT instructions and DELETE model both land", async () => {
+  const assetService = liveDefinitionAsset(
+    storedDefinitionBytesWithModel("anthropic/claude-sonnet"),
+  );
+  const app = buildApp(
+    assetService,
+    fakeInstructionsDb({
+      id: "def_1",
+      assetId: "ast_1",
+      name: "research-buddy",
+    }),
+  );
+
+  const [putRes, delRes] = await Promise.all([
+    put(app, "/def_1", {
+      name: "Research Buddy",
+      systemPrompt: "You are now a blunt researcher.",
+    }),
+    app.request("/def_1/capabilities/model", { method: "DELETE" }),
+  ]);
+  expect(putRes.status).toBe(200);
+  expect(delRes.status).toBe(200);
+
+  const workflowJson = await readAgentDefinitionWorkflowJson(
+    assetService,
+    "ast_1",
+  );
+  expect(promptFrom(workflowJson)).toBe("You are now a blunt researcher.");
+  expect(modelFrom(workflowJson)).toBeUndefined();
+});
+
+test("concurrent PUT skills and DELETE model both land", async () => {
+  const skillsStore = createInMemoryDefinitionSkillsStore();
+  const assetService = liveDefinitionAsset(
+    storedDefinitionBytesWithModel("anthropic/claude-sonnet"),
+  );
+  const app = buildApp(
+    assetService,
+    fakeInstructionsDb({
+      id: "def_1",
+      assetId: "ast_1",
+      name: "research-buddy",
+    }),
+    allowAllRequireGrant,
+    fakeHistory(),
+    fakeCapabilityInventory,
+    skillsStore,
+  );
+
+  const [skillsRes, delRes] = await Promise.all([
+    put(app, "/def_1/skills", { skills: ["long-form-write"] }),
+    app.request("/def_1/capabilities/model", { method: "DELETE" }),
+  ]);
+  expect(skillsRes.status).toBe(200);
+  expect(delRes.status).toBe(200);
+
+  const workflowJson = await readAgentDefinitionWorkflowJson(
+    assetService,
+    "ast_1",
+  );
+  expect(await skillsStore.getSkills("ast_1")).toEqual(["long-form-write"]);
+  expect(promptFrom(workflowJson)).toContain(
+    "- long-form-write: What long-form-write does.",
+  );
+  expect(modelFrom(workflowJson)).toBeUndefined();
+});
+
+test("concurrent DELETE model and a capability-add both land", async () => {
+  const assetService = liveDefinitionAsset(
+    storedDefinitionBytesWithModel("anthropic/claude-sonnet"),
+  );
+  const app = buildApp(
+    assetService,
+    withToolPackageRegistryQueries(
+      fakeInstructionsDb({
+        id: "def_1",
+        assetId: "ast_1",
+        name: "research-buddy",
+      }),
+    ),
+  );
+
+  const [delRes, capRes] = await Promise.all([
+    app.request("/def_1/capabilities/model", { method: "DELETE" }),
+    postTo(app, "/def_1/capabilities", {
+      kind: "toolPackage",
+      name: "@corbits/github-tools",
+    }),
+  ]);
+  expect(delRes.status).toBe(200);
+  expect(capRes.status).toBe(200);
+
+  const workflowJson = await readAgentDefinitionWorkflowJson(
+    assetService,
+    "ast_1",
+  );
+  expect(modelFrom(workflowJson)).toBeUndefined();
+  expect(pinsFrom(workflowJson).map((pin) => pin.name)).toContain(
+    "@corbits/github-tools",
+  );
+});
+
+test("concurrent pin_skill and DELETE model both land", async () => {
+  const skillsStore = createInMemoryDefinitionSkillsStore();
+  const assetService = liveDefinitionAsset(
+    storedDefinitionBytesWithModel("anthropic/claude-sonnet"),
+  );
+  const db = fakeInstructionsDb({
+    id: "def_1",
+    assetId: "ast_1",
+    name: "research-buddy",
+  });
+  const definitionApp = buildApp(
+    assetService,
+    db,
+    allowAllRequireGrant,
+    fakeHistory(),
+    fakeCapabilityInventory,
+    skillsStore,
+  );
+  const pinAuthenticator: WorkflowRunAuthenticator = {
+    resolve: (token, address) =>
+      Promise.resolve(
+        token === "sidecar-token" && address === "run_1@example.com"
+          ? {
+              tenantId: TENANT.id,
+              principalId: PRINCIPAL.id,
+              runId: "run_1",
+            }
+          : null,
+      ),
+  };
+  const pinApp = createWorkflowSkillPinRoutes({
+    db,
+    assetService,
+    skillIndex: fakeSkillIndex,
+    skillsStore,
+    authenticator: pinAuthenticator,
+    deployer: recordingAgentDefinitionDeployer(),
+  });
+
+  const [pinRes, delRes] = await Promise.all([
+    pinApp.request("/pin", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer sidecar-token",
+        "x-workflow-run-address": "run_1@example.com",
+      },
+      body: JSON.stringify({
+        definitionId: "def_1",
+        skillName: "research",
+      }),
+    }),
+    definitionApp.request("/def_1/capabilities/model", { method: "DELETE" }),
+  ]);
+  expect(pinRes.status).toBe(200);
+  expect(delRes.status).toBe(200);
+
+  const workflowJson = await readAgentDefinitionWorkflowJson(
+    assetService,
+    "ast_1",
+  );
+  expect(await skillsStore.getSkills("ast_1")).toEqual(["research"]);
+  expect(promptFrom(workflowJson)).toContain("- research: What research does.");
+  expect(modelFrom(workflowJson)).toBeUndefined();
 });

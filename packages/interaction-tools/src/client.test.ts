@@ -61,13 +61,71 @@ test("postQuestion posts a question block to the workflow-chat participants/mess
   );
 });
 
+test("postQuestion stamps a caller-supplied questionId on the card instead of minting", async () => {
+  let seenBody: unknown;
+  const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+    seenBody = JSON.parse(String(init?.body));
+    return new Response(
+      JSON.stringify({ id: "msg_1", createdAt: "2026-08-17T00:00:00.000Z" }),
+      { status: 201 },
+    );
+  }) as unknown as typeof fetch;
+
+  const result = await postQuestion(testConfig(fetchImpl), {
+    question: "Which environment?",
+    options: ["Staging", "Production"],
+    questionId: "q_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  });
+
+  const body = seenBody as {
+    parts: readonly {
+      kind: string;
+      block: { type: string; data: Record<string, unknown> };
+    }[];
+  };
+  expect(body.parts[0]?.block.data["questionId"]).toBe(
+    "q_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
+  expect(result.questionId).toBe("q_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  expect(result.messageId).toBe("msg_1");
+});
+
 test("a 404 from the route surfaces as NoOwnChannelError", async () => {
   const fetchImpl = (async () =>
     new Response(
       JSON.stringify({
-        error: { code: "not_found", message: "no channel" },
+        error: {
+          code: "not_found",
+          userMessage: "no channel",
+          refId: "ref_test",
+        },
       }),
       { status: 404 },
+    )) as unknown as typeof fetch;
+
+  try {
+    await postQuestion(testConfig(fetchImpl), {
+      question: "Q?",
+      options: ["a", "b"],
+    });
+    throw new Error("expected NoOwnChannelError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(NoOwnChannelError);
+    expect((error as Error).message).toBe("no channel");
+  }
+});
+
+test("a non-ok, non-404 response surfaces the envelope userMessage", async () => {
+  const fetchImpl = (async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: "internal_error",
+          userMessage: "the hub could not post the question",
+          refId: "ref_test",
+        },
+      }),
+      { status: 500 },
     )) as unknown as typeof fetch;
 
   await expect(
@@ -75,17 +133,75 @@ test("a 404 from the route surfaces as NoOwnChannelError", async () => {
       question: "Q?",
       options: ["a", "b"],
     }),
-  ).rejects.toBeInstanceOf(NoOwnChannelError);
+  ).rejects.toThrow("the hub could not post the question");
 });
 
-test("a non-ok, non-404 response throws a plain error", async () => {
+test("reads userMessage even when a legacy message field is also present", async () => {
   const fetchImpl = (async () =>
-    new Response("boom", { status: 500 })) as unknown as typeof fetch;
+    new Response(
+      JSON.stringify({
+        error: {
+          code: "internal_error",
+          message: "legacy",
+          userMessage: "canonical",
+          refId: "ref_test",
+        },
+      }),
+      { status: 500 },
+    )) as unknown as typeof fetch;
 
-  await expect(
-    postQuestion(testConfig(fetchImpl), {
+  try {
+    await postQuestion(testConfig(fetchImpl), {
       question: "Q?",
       options: ["a", "b"],
-    }),
-  ).rejects.toThrow();
+    });
+    throw new Error("expected postQuestion to throw");
+  } catch (error) {
+    expect((error as Error).message).toBe(
+      "Posting the question failed: canonical",
+    );
+  }
+});
+
+test("a 404 envelope with only error.message falls back, never the legacy field", async () => {
+  const fetchImpl = (async () =>
+    new Response(
+      JSON.stringify({
+        error: { code: "not_found", message: "legacy" },
+      }),
+      { status: 404 },
+    )) as unknown as typeof fetch;
+
+  try {
+    await postQuestion(testConfig(fetchImpl), {
+      question: "Q?",
+      options: ["a", "b"],
+    });
+    throw new Error("expected NoOwnChannelError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(NoOwnChannelError);
+    expect((error as Error).message).toBe(
+      "The caller has no channel of its own to post into",
+    );
+  }
+});
+
+test("a non-ok, non-envelope response falls back to status text", async () => {
+  const fetchImpl = (async () =>
+    new Response("boom", {
+      status: 500,
+      statusText: "Internal Server Error",
+    })) as unknown as typeof fetch;
+
+  try {
+    await postQuestion(testConfig(fetchImpl), {
+      question: "Q?",
+      options: ["a", "b"],
+    });
+    throw new Error("expected postQuestion to throw");
+  } catch (error) {
+    expect((error as Error).message).toBe(
+      "Posting the question failed: 500 Internal Server Error",
+    );
+  }
 });

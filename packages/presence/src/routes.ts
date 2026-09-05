@@ -29,6 +29,7 @@ import {
   PresenceHeartbeatBody,
   PresenceJoinBody,
 } from "./schema";
+import { bindPresenceStream } from "./sse-stream";
 
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 45_000;
 
@@ -297,34 +298,13 @@ export function createPresenceRoutes(
     const key = { tenantId: tenant.id, surface };
 
     return streamSSE(c, async (stream) => {
-      let unsubscribePresence: () => void = () => undefined;
-      let unsubscribeDoc: () => void = () => undefined;
-      let unsubscribeSnapshots: () => void = () => undefined;
-      const teardown = () => {
-        unsubscribePresence();
-        unsubscribeDoc();
-        unsubscribeSnapshots();
-      };
-      unsubscribePresence = registry.subscribe(key, (states) => {
-        stream
-          .writeSSE({ event: "presence.state", data: JSON.stringify(states) })
-          .catch(teardown);
-      });
-      unsubscribeDoc = registry.subscribeDocUpdates(key, (update) => {
-        stream
-          .writeSSE({
-            event: "doc.update",
-            data: JSON.stringify({ update: encodeBase64(update) }),
-          })
-          .catch(teardown);
-      });
-      unsubscribeSnapshots = registry.subscribeSnapshots(key, (info) => {
-        stream
-          .writeSSE({ event: "doc.saved", data: JSON.stringify(info) })
-          .catch(teardown);
+      const { teardown, closed } = bindPresenceStream({
+        stream,
+        registry,
+        key,
       });
       stream.onAbort(teardown);
-      await new Promise<void>(() => undefined);
+      await closed;
     });
   });
 

@@ -216,6 +216,106 @@ describe("sendFoldedMail", () => {
       "ins_workbench1@ten1.workbench.test",
     );
   });
+
+  // CL-7450 finding 1: a caller that owns RFC 5322 threading identity for
+  // what it is sending (chat's dispatched frame, whose Message-ID must
+  // equal the timeline row's own) supplies `messageId`/`inReplyTo`/
+  // `references` natively — no more `correlationId` side channel, and no
+  // more silently dropping them on the floor.
+  test("messageId/inReplyTo/references reach sendUserMessage verbatim, overriding the mailId-derived default", async () => {
+    const sendUserMessageCalls: unknown[] = [];
+    const db = {
+      insert() {
+        return { values: async () => undefined };
+      },
+    };
+    const sessionService = {
+      async sendUserMessage(params: unknown) {
+        sendUserMessageCalls.push(params);
+        return new TextEncoder().encode("raw-mime-bytes");
+      },
+    };
+    const sidecarRouter = {
+      dispatchAgentEvent() {
+        return undefined;
+      },
+    };
+
+    await sendFoldedMail(
+      {
+        db: db as never,
+        sessionService: sessionService as never,
+        sidecarRouter: sidecarRouter as never,
+      },
+      {
+        tenantId: "ten_1",
+        sessionId: "ses_1",
+        agentAddress: "ins_workbench1@ten1.workbench.test",
+        from: "prn_sender@ten1.workbench.test",
+        domain: "ten1.workbench.test",
+        content: "hello workbench",
+        cryptoProvider: {} as never,
+        messageId: "<msg_child@ten1.workbench.test>",
+        inReplyTo: "<msg_parent@ten1.workbench.test>",
+        references: ["<msg_root@ten1.workbench.test>"],
+      },
+    );
+
+    expect(sendUserMessageCalls).toHaveLength(1);
+    const call = sendUserMessageCalls[0] as {
+      messageId: string;
+      inReplyTo?: string;
+      references?: string[];
+    };
+    expect(call.messageId).toBe("<msg_child@ten1.workbench.test>");
+    expect(call.inReplyTo).toBe("<msg_parent@ten1.workbench.test>");
+    expect(call.references).toEqual(["<msg_root@ten1.workbench.test>"]);
+  });
+
+  test("with no explicit threading, messageId derives from mailId and inReplyTo falls back to the legacy replyTo mapping", async () => {
+    const sendUserMessageCalls: unknown[] = [];
+    const db = {
+      insert() {
+        return { values: async () => undefined };
+      },
+    };
+    const sessionService = {
+      async sendUserMessage(params: unknown) {
+        sendUserMessageCalls.push(params);
+        return new TextEncoder().encode("raw-mime-bytes");
+      },
+    };
+    const sidecarRouter = {
+      dispatchAgentEvent() {
+        return undefined;
+      },
+    };
+
+    const sent = await sendFoldedMail(
+      {
+        db: db as never,
+        sessionService: sessionService as never,
+        sidecarRouter: sidecarRouter as never,
+      },
+      {
+        tenantId: "ten_1",
+        sessionId: "ses_1",
+        agentAddress: "ins_workbench1@ten1.workbench.test",
+        from: "prn_sender@ten1.workbench.test",
+        domain: "ten1.workbench.test",
+        content: "hello workbench",
+        cryptoProvider: {} as never,
+        replyTo: "wb_room1",
+      },
+    );
+
+    const call = sendUserMessageCalls[0] as {
+      messageId: string;
+      inReplyTo?: string;
+    };
+    expect(call.messageId).toBe(`<${sent.id}@ten1.workbench.test>`);
+    expect(call.inReplyTo).toBe("wb_room1");
+  });
 });
 
 function fakeMailDeps(sendUserMessage: () => Promise<Uint8Array>) {

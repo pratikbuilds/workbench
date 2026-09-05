@@ -20,8 +20,8 @@ describe("buildAvailableSkillsStanza", () => {
     expect(stanza).toContain("- summarize: Condenses a long thread.");
   });
 
-  test("names load_skill as the way to read a body", () => {
-    expect(buildAvailableSkillsStanza(PINNED)).toContain("load_skill");
+  test("names skills_load as the way to read a body", () => {
+    expect(buildAvailableSkillsStanza(PINNED)).toContain("skills_load");
   });
 
   test("is empty when nothing is pinned", () => {

@@ -114,6 +114,7 @@ function buildHarness() {
         subscriber = undefined;
       };
     },
+    notifySettingsChanged: async () => undefined,
     requestConnect() {
       // Opening the card's own inline field — the actual connect happens
       // through `submitAccessToken` below.

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   ACTION_COMMANDS,
   consumePendingNewSkill,
-  requestNewRoutine,
   resetPendingDialogRequests,
   runActionCommand,
 } from "./command-palette-actions";
@@ -27,7 +26,6 @@ function context(overrides: {
   const dispatched: string[] = [];
   let themeCycled = false;
   let canvasClosed = false;
-  const openedRoutines: (string | null)[] = [];
   const listener = (event: Event) => dispatched.push(event.type);
   for (const type of ["workbench:skills:create", "workbench:tasks:create"]) {
     window.addEventListener(type, listener);
@@ -43,9 +41,6 @@ function context(overrides: {
     closeCanvas: () => {
       canvasClosed = true;
     },
-    openRoutine: (subject: { readonly routineId?: string | null }) => {
-      openedRoutines.push(subject.routineId ?? null);
-    },
   };
   return {
     ctx,
@@ -53,7 +48,6 @@ function context(overrides: {
     dispatched,
     themeCycled: () => themeCycled,
     canvasClosed: () => canvasClosed,
-    openedRoutines,
   };
 }
 
@@ -106,13 +100,6 @@ describe("runActionCommand", () => {
     await runActionCommand("new-workbench", ctx);
     expect(dispatched).toEqual([]);
     expect(navigated).toEqual([NEW_WORKBENCH_PATH]);
-  });
-
-  test("new-routine opens the routine panel synchronously, beside whatever page is showing — no navigation, no pending flag", async () => {
-    const { ctx, navigated, openedRoutines } = context({ path: "/library" });
-    await runActionCommand("new-routine", ctx);
-    expect(navigated).toEqual([]);
-    expect(openedRoutines).toEqual([null]);
   });
 
   test("new-skill off-route navigates and records a pending flag instead of dispatching", async () => {
@@ -222,49 +209,5 @@ describe("runActionCommand", () => {
       reuseExisting: true,
     });
     expect(navigated).toEqual(["/w/chan_myra_dm"]);
-  });
-});
-
-// Backs the `>` command palette's "New routine" and "Make this a routine"
-// (chat-page.tsx) — a caller with no command-palette
-// `ActionCommandContext`. Canvas state lives above every route, so this
-// opens the panel synchronously, beside whatever page is already showing
-// — no navigation, no pending flag, no window event, no mount race to
-// guard against.
-describe("requestNewRoutine", () => {
-  test("opens a fresh routine panel with no navigation", () => {
-    const openedRoutines: (string | null)[] = [];
-
-    requestNewRoutine({
-      openRoutine: (subject) => openedRoutines.push(subject.routineId ?? null),
-    });
-
-    expect(openedRoutines).toEqual([null]);
-  });
-
-  test("carries an initial name and instruction through to the opened subject", () => {
-    const openedSubjects: {
-      readonly routineId: string | null;
-      readonly initialName?: string;
-      readonly initialInstruction?: string;
-    }[] = [];
-
-    requestNewRoutine({
-      openRoutine: (subject) =>
-        openedSubjects.push({
-          ...subject,
-          routineId: subject.routineId ?? null,
-        }),
-      initialName: "Weekly digest",
-      initialInstruction: "Summarize last week's calls",
-    });
-
-    expect(openedSubjects).toEqual([
-      {
-        routineId: null,
-        initialName: "Weekly digest",
-        initialInstruction: "Summarize last week's calls",
-      },
-    ]);
   });
 });

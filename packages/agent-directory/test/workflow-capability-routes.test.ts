@@ -31,6 +31,7 @@ import {
 } from "../src/skills-store";
 import { SOURCE_TREE_PATHS } from "./source-tree";
 import type { CapabilityInventoryProvider } from "../src/capability-inventory";
+import { CORBITS_TOOLS_REGISTRY } from "@corbits/tool-registry-publish";
 
 const TENANT_ID = "tnt_1";
 const RUN_ID = "run_1";
@@ -96,6 +97,20 @@ function fakeAssetService(overrides: Partial<AssetService> = {}): AssetService {
   };
 }
 
+/** `resolvePinnedVersion`'s `resolveAssetByName` lookup, stubbed as a
+ * tenant-owned `corbits-tools` package-registry asset with no parent —
+ * mirrors `routes.test.ts`'s `CORBITS_TOOLS_REGISTRY_ASSET` fixture. */
+const CORBITS_TOOLS_REGISTRY_ASSET = {
+  id: "ast_corbits_tools",
+  tenantId: TENANT_ID,
+  kind: "package-registry" as const,
+  name: CORBITS_TOOLS_REGISTRY,
+  displayName: CORBITS_TOOLS_REGISTRY,
+  creatorPrincipalId: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
 function fakeDb(): DB["db"] {
   return {
     query: {
@@ -113,6 +128,8 @@ function fakeDb(): DB["db"] {
           name: "research-buddy",
         }),
       },
+      tenant: { findFirst: async () => ({ parentId: null }) },
+      asset: { findFirst: async () => CORBITS_TOOLS_REGISTRY_ASSET },
     },
   } as unknown as DB["db"];
 }
@@ -254,6 +271,8 @@ test("a run may add a capability to its own definition without any grant check",
         writtenMessage = params.tree.message;
         return Promise.resolve({ commitSha: "deadbeef" });
       },
+      listAssetBlobs: () =>
+        Promise.resolve(["corbits-capability-tools-0.0.2.tgz"]),
     }),
     deployer,
   });
@@ -275,7 +294,7 @@ test("a run may add a capability to its own definition without any grant check",
     toolPackagePins: { name: string; version: string }[];
   };
   expect(body.toolPackagePins).toEqual([
-    { name: "@corbits/capability-tools", version: "*" },
+    { name: "@corbits/capability-tools", version: "0.0.2" },
   ]);
 });
 

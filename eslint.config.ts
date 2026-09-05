@@ -60,14 +60,6 @@ export default defineConfig(
         },
       ],
     },
-    languageOptions: {
-      parserOptions: {
-        projectService: {
-          allowDefaultProject: [],
-        },
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
   },
   {
     files: ["scripts/**/*.ts"],

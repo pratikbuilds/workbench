@@ -508,8 +508,9 @@ describe("WorkbenchTimeline", () => {
     expect(markup).not.toMatch(/\[HTTP/);
     expect(markup).not.toContain("401");
     expect(markup).not.toContain("invalid api key");
+    expect(markup).not.toMatch(/credential error/i);
     expect(markup).toContain(
-      "This agent could not complete your request due to a credential error",
+      "This didn&#x27;t go through. Try again, or check the connection in Settings.",
     );
     expect(markup).toContain("Fix this connection");
   });
@@ -691,12 +692,12 @@ describe("profileSubjectFromParticipant", () => {
   test("agent addresses become agent subjects with @ handle display", () => {
     expect(
       profileSubjectFromParticipant({
-        address: "prn_agent@agents.example",
+        address: "scout@agents.example",
         handle: "scout",
       }),
     ).toEqual({
       kind: "agent",
-      address: "prn_agent@agents.example",
+      address: "scout@agents.example",
       handle: "scout",
       displayName: "@scout",
       initials: "SC",

@@ -194,10 +194,16 @@ const HubEnv = type({
     "opt-in to initialize hub git-on-disk state inside a directory that is already a git work tree; refused by default because a nested init that misses its own .git walks up and commits onto the enclosing working branch",
   ),
   "SIDECAR_PROVISIONERS?": type("string").describe(
-    "comma-separated sidecar-allocation backend ids to register for workbenches placed on their own exclusive sidecar, e.g. 'docker'; unset or empty (default) keeps the hub on its current single shared sidecar with no exclusive-placement backend available",
+    "comma-separated sidecar-allocation backend ids to register for workbenches placed on their own exclusive sidecar: 'process' (a child process on this host), 'docker', or 'e2b'; unset or empty (default) registers 'process' alone, so a single-server install provisions exclusive sidecars with no operator configuration",
   ),
   "SIDECAR_DEFAULT_PROVISIONER?": type("string > 0").describe(
     "which id listed in SIDECAR_PROVISIONERS is the default backend exclusive placements provision on; required when SIDECAR_PROVISIONERS lists more than one id, optional (defaults to that one id) when it lists exactly one",
+  ),
+  "PROCESS_PROVISIONER_SIDECAR_ENTRY?": type("string > 0").describe(
+    "the sidecar entry point the process backend spawns for each exclusive allocation; unset (default) resolves this repository's own apps/sidecar/src/index.ts",
+  ),
+  "PROCESS_PROVISIONER_RUNTIME?": type("string > 0").describe(
+    "the executable the process backend runs that entry point with; unset (default) reuses the bun binary running the hub",
   ),
   "E2B_API_KEY?": type("string > 0").describe(
     "the E2B API key the e2b sidecar provisioner authenticates with; required when SIDECAR_PROVISIONERS includes 'e2b'",
@@ -304,10 +310,22 @@ export type E2BSidecarProvisionerConfig = {
   readonly sandboxTimeoutMs?: string;
 };
 
-export type SidecarProvisionerConfig =
-  DockerSidecarProvisionerConfig | E2BSidecarProvisionerConfig;
+/** The default backend: one `apps/sidecar` child process per allocation
+ * on this host. It needs no operator settings at all — an unconfigured
+ * install gets it — and both env keys below are overrides for an operator
+ * running a sidecar build from somewhere other than this repository. */
+export type ProcessSidecarProvisionerConfig = {
+  readonly id: "process";
+  readonly sidecarEntryPath?: string;
+  readonly runtimePath?: string;
+};
 
-const SIDECAR_PROVISIONER_IDS = ["docker", "e2b"] as const;
+export type SidecarProvisionerConfig =
+  | ProcessSidecarProvisionerConfig
+  | DockerSidecarProvisionerConfig
+  | E2BSidecarProvisionerConfig;
+
+const SIDECAR_PROVISIONER_IDS = ["process", "docker", "e2b"] as const;
 type SidecarProvisionerId = (typeof SIDECAR_PROVISIONER_IDS)[number];
 
 function isSidecarProvisionerId(value: string): value is SidecarProvisionerId {
@@ -368,12 +386,11 @@ export type HubConfig = {
    * production cadence (`routine-scheduler.ts`'s own default). */
   readonly routineSchedulerPollIntervalMs?: number;
   /** Every sidecar-allocation backend registered for exclusive placement,
-   * zero or more, each addressable by its provisioner id. Empty when
-   * unconfigured — the registry then holds no provisioners and every
-   * exclusive placement fails closed at deployment time. */
+   * one or more, each addressable by its provisioner id. Never empty: an
+   * install that configures nothing registers the `process` backend, so
+   * exclusive placement works on a single server out of the box. */
   readonly sidecarProvisioners: readonly SidecarProvisionerConfig[];
-  /** Which registered id exclusive placements provision on. Undefined
-   * exactly when `sidecarProvisioners` is empty. */
+  /** Which registered id exclusive placements provision on. */
   readonly defaultSidecarProvisionerId?: string;
   /** Overrides the ws(s):// URL a provisioned sidecar dials back to reach
    * this hub. Unset derives it from baseUrl instead. */
@@ -470,11 +487,13 @@ type SidecarProvisionersConfig = {
  * backend's own required settings (e.g. `DOCKER_PROVISIONER_IMAGE` for
  * `docker`) must be present, and an unknown id, a duplicate id, or a
  * `SIDECAR_DEFAULT_PROVISIONER` naming a backend that isn't listed all
- * fail boot loudly — never silently falling back to the no-provisioner
- * default. With `SIDECAR_PROVISIONERS` unset or empty, this returns no
- * provisioners and no default, so every exclusive placement fails
- * closed at deployment time rather than falling back to the shared
- * sidecar.
+ * fail boot loudly. With `SIDECAR_PROVISIONERS` unset or empty, the
+ * `process` backend is registered as the sole default: an operator who
+ * configures nothing gets exclusive sidecar placement on the hub's own
+ * host, which is what makes a single-server install work with many
+ * chats and workflows on one VPS. Choosing where sidecars run is then
+ * one variable — `SIDECAR_PROVISIONERS` — and listing it explicitly
+ * (including `process`) behaves exactly as any other explicit list.
  */
 function sidecarProvisionersFrom(
   parsed: ParsedHubEnv,
@@ -493,7 +512,10 @@ function sidecarProvisionersFrom(
         ].join("\n"),
       );
     }
-    return { provisioners: [] };
+    return {
+      provisioners: [sidecarProvisionerConfigFor("process", parsed)],
+      defaultProvisionerId: "process",
+    };
   }
 
   const seen = new Set<string>();
@@ -547,6 +569,16 @@ function sidecarProvisionerConfigFor(
   parsed: ParsedHubEnv,
 ): SidecarProvisionerConfig {
   switch (id) {
+    case "process":
+      return {
+        id: "process",
+        ...(parsed.PROCESS_PROVISIONER_SIDECAR_ENTRY === undefined
+          ? {}
+          : { sidecarEntryPath: parsed.PROCESS_PROVISIONER_SIDECAR_ENTRY }),
+        ...(parsed.PROCESS_PROVISIONER_RUNTIME === undefined
+          ? {}
+          : { runtimePath: parsed.PROCESS_PROVISIONER_RUNTIME }),
+      };
     case "docker": {
       if (parsed.DOCKER_PROVISIONER_IMAGE === undefined) {
         throw new Error(

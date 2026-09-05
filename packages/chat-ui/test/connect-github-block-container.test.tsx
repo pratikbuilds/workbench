@@ -1,11 +1,9 @@
 // CL-6463: a successful PAT submit must flip the connect-github card to
 // connected on its own — never leaning on a host that happens to fan the
-// change out through `subscribeConnectState` (real hosts vary: the real
-// `createChatConnectGithubActions` only fans out after its own actions,
-// never off a live `chat.settings` push). These fakes deliberately never
-// call the subscriber from `submitAccessToken`, so a pass here proves the
-// container drove its own state from the submit's own result — not from a
-// side channel a differently-wired host might forget.
+// change out through `subscribeConnectState`. These fakes deliberately
+// never call the subscriber from `submitAccessToken`, so a pass here
+// proves the container drove its own state from the submit's own result
+// — not from a side channel a differently-wired host might forget.
 import { afterEach, describe, expect, test } from "bun:test";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -87,6 +85,7 @@ function buildNeverNotifiesHarness(options?: {
             : { kind: "disconnected" },
         ),
       subscribeConnectState: () => () => {},
+      notifySettingsChanged: async () => {},
       requestConnect: () => {},
       submitAccessToken: async (_token: string) => {
         const result = options?.submitResult ?? { ok: true as const };
@@ -214,6 +213,7 @@ describe("ConnectGithubBlockContainer keeps connected across loading (CL-6741)",
           subscriber = undefined;
         };
       },
+      notifySettingsChanged: async () => {},
       requestConnect: () => {},
       submitAccessToken: async () => ({ ok: true as const }),
       startReviewing: async () => ({ startedTriggerCount: 0 }),
@@ -271,6 +271,7 @@ describe("ConnectGithubBlockContainer keeps connected across loading (CL-6741)",
           subscriber = undefined;
         };
       },
+      notifySettingsChanged: async () => {},
       requestConnect: () => {},
       submitAccessToken: async () => ({ ok: true as const }),
       startReviewing: async () => ({ startedTriggerCount: 0 }),
@@ -299,6 +300,7 @@ describe("ConnectGithubBlockContainer names a kind:error state (PR 422)", () => 
     const actions: ConnectGithubActions = {
       getConnectState: () => Promise.resolve({ kind: "error", message }),
       subscribeConnectState: () => () => {},
+      notifySettingsChanged: async () => {},
       requestConnect: () => {},
       submitAccessToken: async () => ({ ok: true as const }),
       startReviewing: async () => ({ startedTriggerCount: 0 }),
@@ -328,6 +330,7 @@ describe("ConnectGithubBlockContainer names a kind:error state (PR 422)", () => 
     const actions: ConnectGithubActions = {
       getConnectState: () => Promise.reject(new Error("boom")),
       subscribeConnectState: () => () => {},
+      notifySettingsChanged: async () => {},
       requestConnect: () => {},
       submitAccessToken: async () => ({ ok: true as const }),
       startReviewing: async () => ({ startedTriggerCount: 0 }),

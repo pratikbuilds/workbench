@@ -34,9 +34,9 @@ export type WorkbenchTemplateBlock = typeof WorkbenchTemplateBlock.infer;
 
 /**
  * One routine a template creates on install. `cron` is a 5-field
- * expression in the grammar `@corbits/routines`' `cron.ts` speaks — the
- * authority on whether one is valid and when it fires; the shape check
- * here only catches a malformed literal at module load.
+ * expression in the grammar `@corbits/workflows` schedule/cron speaks —
+ * the authority on whether one is valid and when it fires; the shape
+ * check here only catches a malformed literal at module load.
  */
 export const WorkbenchTemplateRoutine = type({
   /** Stable key an open input can point at. Unique within a template. */

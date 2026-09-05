@@ -40,6 +40,11 @@ export function SettingsNav({
         return (
           <div key={group.id} className="settings-nav-group">
             <p className="settings-nav-heading">{group.label}</p>
+            {group.accessProbeFailed === true && (
+              <p className="settings-nav-access-error">
+                {SETTINGS_STRINGS.accessProbeFailedHint}
+              </p>
+            )}
             {primary.map((section) => {
               const Icon = section.icon;
               return (

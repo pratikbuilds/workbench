@@ -64,6 +64,10 @@ export const workflowDefinition = pgTable(
     origin: text("origin", { enum: ["authored", "run"] })
       .notNull()
       .default("authored"),
+    // WORKBENCH DELTA (see VENDORED.md, CL-4455): last UTC minuteKey this
+    // definition's native ScheduleTrigger already claimed. Null means never.
+    // Not part of wire_hash.
+    scheduleClaimedMinute: text("schedule_claimed_minute"),
     // Grant requirements manifest, resolved at launch into materialized grants.
     // Validated as GrantRequirement[] at parse time.
     grantRequirements: jsonb("grant_requirements"),

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient } from "@tanstack/react-query";
+import { SETTINGS_STRINGS, type TenancyAccess } from "@corbits/settings-ui";
 
 import type { PrincipalsPage } from "../src/api";
 import { BenchProvider } from "../src/bench-context";
@@ -29,16 +30,23 @@ const principalsPage: PrincipalsPage = {
   nextCursor: null,
 };
 
-const deniedAccess = {
+const deniedAccess: TenancyAccess = {
   people: "denied",
   roles: "denied",
   grants: "denied",
   credentials: "denied",
-} as const;
+};
+
+const errorAccess: TenancyAccess = {
+  people: "error",
+  roles: "error",
+  grants: "error",
+  credentials: "error",
+};
 
 /** A client pre-seeded so both the bench and the settings-access probe are
  * already resolved on first render — deterministic, no real network. */
-function seededClient(): QueryClient {
+function seededClient(access: TenancyAccess = deniedAccess): QueryClient {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0, staleTime: Infinity },
@@ -47,7 +55,7 @@ function seededClient(): QueryClient {
   client.setQueryData(meKeys.principals, principalsPage);
   client.setQueryData(
     tenantKeys.settingsAccess("tenant_1", "principal_1"),
-    deniedAccess,
+    access,
   );
   return client;
 }
@@ -67,13 +75,17 @@ describe("SettingsRoute section-id redirect", () => {
     container = null;
   });
 
-  async function mount(path: string, navigated: string[]) {
+  async function mount(
+    path: string,
+    navigated: string[],
+    access: TenancyAccess = deniedAccess,
+  ) {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => {
       root?.render(
-        <TestQueryProvider client={seededClient()}>
+        <TestQueryProvider client={seededClient(access)}>
           <BenchProvider>
             <SettingsRoute path={path} navigate={(to) => navigated.push(to)} />
           </BenchProvider>
@@ -98,5 +110,24 @@ describe("SettingsRoute section-id redirect", () => {
     const navigated: string[] = [];
     await mount("/settings/account", navigated);
     expect(navigated).toEqual([]);
+  });
+
+  test("a probe failure is not presented as a gate deny", async () => {
+    const navigated: string[] = [];
+    await mount("/settings/account", navigated, errorAccess);
+    expect(container?.textContent).toContain(
+      SETTINGS_STRINGS.accessProbeFailedHint,
+    );
+    expect(container?.textContent).not.toContain(
+      SETTINGS_STRINGS.peopleSectionTitle,
+    );
+  });
+
+  test("a gate deny does not claim the access check failed", async () => {
+    const navigated: string[] = [];
+    await mount("/settings/account", navigated);
+    expect(container?.textContent).not.toContain(
+      SETTINGS_STRINGS.accessProbeFailedHint,
+    );
   });
 });

@@ -15,8 +15,8 @@
 // honestly: every tool call this scenario needs is wired, its inputs
 // are accepted by the real route contracts, and outputs from one step
 // (a newly created agent's id) flow correctly into the next step's
-// input (that agent becomes the routine's `definitionId`) — the exact
-// mechanical chain a model would need to walk.
+// input (that agent is minted its own 1:1 chat) — the exact mechanical
+// chain a model would need to walk.
 //
 // Scenario played back (owner's script) against three connectors that
 // are registered (Exa, Granola, Linear). A connector name that is
@@ -30,10 +30,6 @@
 //      state flips to connected), she creates two specialist agents —
 //      a call-notes extractor and a weekly-analytics agent — minting
 //      each specialist its own 1:1 chat (never inviting into Myra's).
-//   4. She creates two routines: a daily one that extracts info from
-//      calls and shares updates, targeting the call-notes agent; and a
-//      weekly one that provides analytical updates, targeting the
-//      analytics agent.
 import { expect, test } from "bun:test";
 import type { ToolCall } from "@intx/types/runtime";
 
@@ -48,11 +44,6 @@ import {
   CREATE_AGENT_TOOL,
   type WorkflowAgentDirectoryEnv,
 } from "@corbits/agent-directory-tools";
-import {
-  routinesTools,
-  ROUTINE_CREATE_TOOL,
-  type WorkflowRoutineEnv,
-} from "@corbits/routines-tools";
 
 const HUB = "https://hub.example.com";
 
@@ -66,7 +57,7 @@ function call(
 
 /** Minimal in-memory hub double: tracks which connectors are connected
  * and which agent definitions have been created, and routes every
- * request the three bundles under test can issue to the exact response
+ * request the two bundles under test can issue to the exact response
  * shape their own clients parse. Any request this fake doesn't
  * recognize fails the test loudly (thrown 404), rather than silently
  * returning something a real hub never would. */
@@ -75,11 +66,6 @@ function createFakeHub() {
   const createdDefinitions: { id: string; name: string }[] = [];
   const mintedDefinitionIds: string[] = [];
   const invitedDefinitionIds: string[] = [];
-  const createdRoutines: {
-    definitionAssetId: string;
-    trigger: unknown;
-    name: string;
-  }[] = [];
   const postedCards: {
     connectorId: string;
     displayName: string;
@@ -213,36 +199,6 @@ function createFakeHub() {
       );
     }
 
-    if (
-      url.pathname === "/api/workflow-routines/routines" &&
-      method === "POST" &&
-      body
-    ) {
-      createdRoutines.push({
-        definitionAssetId: body["definitionAssetId"] as string,
-        trigger: body["trigger"],
-        name: body["name"] as string,
-      });
-      return Response.json(
-        {
-          id: `rtn_${String(createdRoutines.length)}`,
-          name: body["name"],
-          definitionAssetId: body["definitionAssetId"],
-          definitionId: body["definitionAssetId"],
-          trigger: body["trigger"],
-          scope: "bench",
-          input: body["input"] ?? {},
-          enabled: true,
-          deliveryWorkbenchId: null,
-          consecutiveFailures: 0,
-          deadLetteredAt: null,
-          createdAt: "2026-08-16T00:00:00.000Z",
-          updatedAt: "2026-08-16T00:00:00.000Z",
-        },
-        { status: 201 },
-      );
-    }
-
     throw new Error(`fake hub: unhandled ${method} ${url.pathname}`);
   }) as unknown as typeof fetch;
 
@@ -252,15 +208,14 @@ function createFakeHub() {
     createdDefinitions,
     invitedDefinitionIds,
     mintedDefinitionIds,
-    createdRoutines,
     postedCards,
   };
 }
 
-test("GTM scenario: connect three services, then create two specialist agents and two routines targeting them", async () => {
+test("GTM scenario: connect three services, then create two specialist agents", async () => {
   const hub = createFakeHub();
 
-  // None of these three bundles' `WorkflowXEnv` types expose a
+  // None of these two bundles' `WorkflowXEnv` types expose a
   // `fetchImpl` test seam (only their `client.ts`'s own config type
   // does, never threaded from `env`) — the established pattern this
   // repo's other tool-bundle tests use instead (see
@@ -289,11 +244,6 @@ async function runScenario(
     sidecarToken: "sc-token",
     address: "run_myra@workflow",
   } as unknown as WorkflowAgentDirectoryEnv;
-  const routinesEnv: WorkflowRoutineEnv = {
-    hubRoutinesUrl: HUB,
-    sidecarToken: "sc-token",
-    address: "run_myra@workflow",
-  } as unknown as WorkflowRoutineEnv;
 
   // Step 2: Myra checks what's connected — nothing is, yet.
   const connectionsBundle = connectionsTools(connectionsEnv);
@@ -393,50 +343,4 @@ async function runScenario(
     hub.createdDefinitions.map((d) => d.id),
   );
   expect(hub.invitedDefinitionIds).toEqual([]);
-
-  const [callNotesDefinition, analyticsDefinition] = hub.createdDefinitions;
-  if (callNotesDefinition === undefined || analyticsDefinition === undefined) {
-    throw new Error("expected both specialist agents to have been created");
-  }
-  const callNotesDefinitionId = callNotesDefinition.id;
-  const analyticsDefinitionId = analyticsDefinition.id;
-
-  // Step 4: Myra creates the two routines, each targeting the agent she
-  // just made for it — the created agent's id, returned from step 3,
-  // becomes the routine's definitionAssetId here.
-  const routinesBundle = routinesTools(routinesEnv);
-  const dailyRoutine = await routinesBundle.run(
-    call("r1", ROUTINE_CREATE_TOOL, {
-      name: "Daily call notes",
-      instruction: "Extract info from today's calls and share updates.",
-      definitionAssetId: callNotesDefinitionId,
-      trigger: { kind: "daily", hour: 8, minute: 0 },
-    }),
-    new AbortController().signal,
-  );
-  expect(dailyRoutine.isError).toBe(false);
-
-  const weeklyRoutine = await routinesBundle.run(
-    call("r2", ROUTINE_CREATE_TOOL, {
-      name: "Weekly analytics update",
-      instruction: "Provide an analytical update for the week.",
-      definitionAssetId: analyticsDefinitionId,
-      trigger: { kind: "weekly", dayOfWeek: 5, hour: 9, minute: 0 },
-    }),
-    new AbortController().signal,
-  );
-  expect(weeklyRoutine.isError).toBe(false);
-
-  expect(hub.createdRoutines).toEqual([
-    {
-      definitionAssetId: callNotesDefinitionId,
-      trigger: { kind: "daily", hour: 8, minute: 0 },
-      name: "Daily call notes",
-    },
-    {
-      definitionAssetId: analyticsDefinitionId,
-      trigger: { kind: "weekly", dayOfWeek: 5, hour: 9, minute: 0 },
-      name: "Weekly analytics update",
-    },
-  ]);
 }

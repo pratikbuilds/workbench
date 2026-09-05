@@ -58,15 +58,11 @@ test("allowlisted product schema files pass at their max count", () => {
       ].join("\n"),
     },
     {
-      relPath: "packages/routines/src/schema.ts",
-      contents: [
-        `export const routine = routinesSchema.table("routine", {});`,
-        `export const routineRun = routinesSchema.table("routine_run", {});`,
-      ].join("\n"),
-    },
-    {
       relPath: "packages/webhook-triggers/src/schema.ts",
-      contents: `export const webhookTrigger = webhookTriggersSchema.table("webhook_trigger", {});`,
+      contents: [
+        `export const webhookTrigger = webhookTriggersSchema.table("webhook_trigger", {});`,
+        `export const repoReviewLease = webhookTriggersSchema.table("repo_review_lease", {});`,
+      ].join("\n"),
     },
     {
       relPath: "packages/notify/src/schema.ts",
@@ -82,18 +78,19 @@ test("allowlisted product schema files pass at their max count", () => {
 test("allowlisted files fail when they grow past their max", () => {
   const report = auditProductTenancy([
     {
-      relPath: "packages/routines/src/schema.ts",
+      relPath: "packages/webhook-triggers/src/schema.ts",
       contents: [
-        `export const routine = routinesSchema.table("routine", {});`,
-        `export const routineRun = routinesSchema.table("routine_run", {});`,
-        `export const routineDraft = routinesSchema.table("routine_draft", {});`,
-        `export const extra = routinesSchema.table("routine_extra", {});`,
+        `export const webhookTrigger = webhookTriggersSchema.table("webhook_trigger", {});`,
+        `export const repoReviewLease = webhookTriggersSchema.table("repo_review_lease", {});`,
+        `export const extra = webhookTriggersSchema.table("webhook_extra", {});`,
       ].join("\n"),
     },
   ]);
   expect(report.violations).toHaveLength(1);
-  expect(report.violations[0]).toContain("packages/routines/src/schema.ts");
-  expect(report.violations[0]).toContain("4 pgTable");
+  expect(report.violations[0]).toContain(
+    "packages/webhook-triggers/src/schema.ts",
+  );
+  expect(report.violations[0]).toContain("3 pgTable");
 });
 
 test("a `xyzSchema.table(...)` call is a violation naming the file, same as pgTable", () => {

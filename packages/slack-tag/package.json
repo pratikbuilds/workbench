@@ -23,7 +23,7 @@
     "chat": "^4.34.0",
     "corbits-tag": "github:corbitsdev/corbits-tag#92eabf4f7bf0a9663799c07db6c3f72a4275f894",
     "drizzle-orm": "catalog:",
-    "hono": "^4.11.9",
+    "hono": "catalog:",
     "postgres": "catalog:"
   },
   "devDependencies": {

@@ -3,11 +3,11 @@
 // machine-checked draft via one one-shot Myra call — the third consumer
 // of the inventory-assembly + strict-reply-schema +
 // fail-closed-inventory-validation pattern this package's own
-// `planner-run.ts` and `@corbits/routines`' `myra-drafting.ts` already
-// establish. Every failure mode — Myra unresolvable, the run timing out
-// or failing, an unparseable reply, an out-of-inventory model/tool
-// package/skill pick — propagates as its own honest, specific error;
-// nothing here fabricates a draft or falls back to a template.
+// `planner-run.ts` already establishes. Every failure mode — Myra
+// unresolvable, the run timing out or failing, an unparseable reply, an
+// out-of-inventory model/tool package/skill pick — propagates as its
+// own honest, specific error; nothing here fabricates a draft or falls
+// back to a template.
 //
 // This module only proposes — it never deploys. The caller (the create-
 // agent panel's `POST .../planner/agent-definitions/draft` client call)

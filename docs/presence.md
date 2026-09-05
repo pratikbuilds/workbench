@@ -102,20 +102,31 @@ dependency-injectable for testing. `apps/web/src/presence/use-presence-room.ts`
 is the thin React hook that wraps it — the only place apps/web talks to the
 presence package directly. Two composition sites use it today:
 
-- `apps/web/src/pages/chat-page.tsx` connects to `workbench:<workbenchId>` and
-  hands the snapshot to `@corbits/chat-ui`'s `ChatWorkspace` as
-  `presenceMembers`, rendered as a live avatar stack beside the workbench
-  header's static participant list.
+- `apps/web/src/pages/chat-page.tsx` used to connect to `workbench:<workbenchId>`
+  and hand the snapshot to `@corbits/chat-ui`'s `ChatWorkspace` as
+  `presenceMembers`. That roster now rides the workbench `/stream`
+  (`chat.presence` / `chat.presence.snapshot`, CL-6328); `@corbits/presence`
+  no longer backs the header stack.
 - `apps/web/src/shell/app-shell.tsx` connects to `artifact:<artifactId>`
   when the canvas has one open, publishes the pointer's fractional position
   over the artifact pane as `cursor`, and hands the room's snapshot to
   `CanvasColumn` as `presenceCursors` — colored, labeled dots overlaid on
-  the read-only artifact renderer.
+  the artifact renderer.
+
+The SSE stream opens and stays open regardless of whether join or a later
+heartbeat actually succeeded, so a healthy-looking cursor overlay is not
+proof the client is in the room. `PresenceHandle.onError` reports every
+failed join/heartbeat/leave/update; `onRecovered` fires on a successful
+join or heartbeat. `usePresenceRoom` subscribes to both: errors go through
+`reportError` with tenant, room (`surface`), and principal context, and the
+canvas pane shows a quiet "Reconnecting…" caption only after a second
+consecutive failure. A single transient retry stays silent; a successful
+rejoin clears the caption.
 
 Neither `@corbits/chat-ui` nor `apps/web/src/shell/canvas-column.tsx`
 imports `@corbits/presence` itself — both only take plain data
-(`PresenceMember`, `PresenceCursor`) as props, the same way they take any
-other host-supplied data.
+(`PresenceMember`, `PresenceCursor`, and a `PresenceConnection` flag) as
+props, the same way they take any other host-supplied data.
 
 ## Phase 2: co-editing
 

@@ -17,7 +17,6 @@ export type {
   Turn,
   WorldAgentDefinition,
   WorldConnection,
-  WorldRoutine,
   WorldSnapshot,
   WorldWebhookTrigger,
 } from "./types.ts";
@@ -52,8 +51,6 @@ export {
   agentHasTools,
   connectionIsLive,
   fakeReceived,
-  routineDeliversTo,
-  routineHasTrigger,
 } from "./scorers/world-scorers.ts";
 export {
   parseMcpFakeRecording,
@@ -62,11 +59,6 @@ export {
   type RecordedCall,
 } from "./fakes/recording.ts";
 export { GITHUB_MCP_FAKE_RECORDING } from "./fakes/recordings.ts";
-export { startMcpFake, type McpFakeHandle } from "./fakes/mcp-fake-server.ts";
-export {
-  fireRoutineNow,
-  type FireRoutineDeps,
-} from "./targets/fire-routine.ts";
 export {
   ALL_EVALS,
   aiDailyResearchEval,

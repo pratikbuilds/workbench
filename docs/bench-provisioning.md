@@ -77,8 +77,10 @@ Connecting hands the person forward immediately, and the wait on the
 other side is as short as it can honestly be: the setup agent (Myra)
 leads `DEFAULT_WORKFLOWS`, so she is deployed before anything else, and
 the land hop drops the person into her room the moment she can answer.
-The digest, recurring-task and research seeds finish behind them —
-nobody needs a scheduled digest in their first second.
+The other catalog workflows (digest, recurring-task, research) are not
+seeded at all — they are deployable through the catalog instantiate route
+(CL-7073) once someone picks one, not on a critical path nobody is waiting
+on.
 
 While she is still coming up, the shared warm loader is the whole
 screen: one honest headline and a rotating tip, never an internal count.

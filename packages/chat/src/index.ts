@@ -353,6 +353,18 @@ export type {
 } from "./write-claims";
 
 export {
+  createDrizzleTurnMailCorrelationStore,
+  createInMemoryTurnMailCorrelationStore,
+  mailIdFromBracketMessageId,
+} from "./turn-mail-correlation";
+export type {
+  RecordTurnMailInput,
+  TurnMailCorrelationDb,
+  TurnMailCorrelationStore,
+  TurnMailSource,
+} from "./turn-mail-correlation";
+
+export {
   createWorkbenchHostInferencePreferencesResolver,
   listDefaultInferencePreferences,
   listConnectedProviders,

@@ -1,26 +1,23 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  CONSUMER_INFERENCE_FAILURE_NOTICE,
   consumerFacingInferenceText,
   isClassifiedInferenceFailureText,
 } from "./inference-failure";
 
 describe("consumerFacingInferenceText", () => {
-  test("keeps the vendor preamble and drops [HTTP …] plus the raw provider message", () => {
+  test("maps a classified credential failure to one recovery sentence", () => {
     expect(
       consumerFacingInferenceText(
         "This agent could not complete your request due to a credential error [HTTP 401]: API key is invalid",
       ),
-    ).toBe(
-      "This agent could not complete your request due to a credential error",
-    );
+    ).toBe(CONSUMER_INFERENCE_FAILURE_NOTICE);
     expect(
       consumerFacingInferenceText(
         "This agent could not complete your request because the API quota has been exhausted [HTTP 429]: rate limited",
       ),
-    ).toBe(
-      "This agent could not complete your request because the API quota has been exhausted",
-    );
+    ).toBe(CONSUMER_INFERENCE_FAILURE_NOTICE);
   });
 
   test("a forced [HTTP 401] dump is not consumer copy", () => {
@@ -29,6 +26,16 @@ describe("consumerFacingInferenceText", () => {
     expect(facing).not.toContain("[HTTP");
     expect(facing).not.toContain("401");
     expect(facing).not.toContain("API key is invalid");
+  });
+
+  test("a tools-unsupported dump is one honest sentence, never HTTP or registry copy", () => {
+    const text = consumerFacingInferenceText(
+      "This agent could not complete your request due to an unrecoverable inference error [HTTP 400]: 'tools' is not supported with this model.",
+    );
+    expect(text).toBe("This agent's model can't use tools.");
+    expect(text).not.toMatch(/HTTP/i);
+    expect(text).not.toContain("function-calling");
+    expect(text).not.toContain("unrecoverable inference error");
   });
 
   test("leaves cause-aware undelivered-notice copy untouched", () => {
@@ -47,12 +54,15 @@ describe("isClassifiedInferenceFailureText", () => {
     ).toBe(true);
   });
 
-  test("matches a credential_failure reply after HTTP/raw is stripped", () => {
+  test("a stripped credential_failure reply is recovery copy, not the classified preamble", () => {
+    const facing = consumerFacingInferenceText(
+      "This agent could not complete your request due to a credential error [HTTP 401]: invalid api key",
+    );
+    expect(facing).toBe(CONSUMER_INFERENCE_FAILURE_NOTICE);
+    expect(facing.toLowerCase()).not.toContain("credential error");
     expect(
       isClassifiedInferenceFailureText(
-        consumerFacingInferenceText(
-          "This agent could not complete your request due to a credential error [HTTP 401]: invalid api key",
-        ),
+        "This agent could not complete your request due to a credential error [HTTP 401]: invalid api key",
       ),
     ).toBe(true);
   });

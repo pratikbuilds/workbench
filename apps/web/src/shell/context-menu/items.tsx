@@ -11,6 +11,7 @@ import {
 import type { ProfileSubject } from "@corbits/chat-ui";
 import { contextMenuItem, contextMenuSeparator } from "@corbits/context-menu";
 import type { ContextMenu, ContextMenuEntry } from "@corbits/context-menu";
+import { reportError } from "@corbits/error-sink";
 import {
   ArrowSquareOut,
   Hash,
@@ -35,7 +36,7 @@ import {
 import { workbenchPath } from "../../workbench-path";
 import { requestWorkbenchRename } from "../../workbench-rename-events";
 import { openCommandPalette } from "../../command-palette-open-store";
-import { runRoutineNow } from "../../routines-api";
+import { runScheduledWorkflowNow } from "../../routines-api";
 import { SETTINGS_PATH } from "../../routes";
 import type { ShellContextMenuTarget } from "./targets";
 
@@ -155,13 +156,19 @@ function routineMenu(
         label: "Run now",
         icon: <PlayCircle />,
         onSelect: () => {
-          void runRoutineNow(tenantId, target.id).then(
-            () => {
+          void (async () => {
+            try {
+              await runScheduledWorkflowNow(tenantId, target.id);
               toast(`${target.name} started`);
               actions.onRoutineRan(tenantId);
-            },
-            () => toast("Couldn't start the routine"),
-          );
+            } catch (cause) {
+              reportError(cause, {
+                operation: "scheduled_workflow_run_now",
+                tenantId,
+              });
+              toast("Couldn't start the routine");
+            }
+          })();
         },
       }),
     );

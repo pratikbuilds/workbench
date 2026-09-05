@@ -322,11 +322,14 @@ describe("block response routes — question answers", () => {
 
     const get = await getResponses(app, workbenchId, "m1", "blk_question1");
     const body = (await get.json()) as { own: unknown };
-    expect(body.own).toEqual({
+    expect(body.own).toMatchObject({
       kind: "question",
       answer: "Production",
       optionIndex: 1,
     });
+    expect((body.own as { notifiedAt: unknown }).notifiedAt).toEqual(
+      expect.any(String),
+    );
   });
 
   test("changing an answer updates the stored response but never dispatches a second turn", async () => {
@@ -367,7 +370,13 @@ describe("block response routes — question answers", () => {
 
     const get = await getResponses(app, workbenchId, "m1", "blk_question1");
     const body = (await get.json()) as { own: unknown };
-    expect(body.own).toEqual({ kind: "question", answer: "Production" });
+    expect(body.own).toMatchObject({
+      kind: "question",
+      answer: "Production",
+    });
+    expect((body.own as { notifiedAt: unknown }).notifiedAt).toEqual(
+      expect.any(String),
+    );
   });
 
   test("a double-click resubmitting the identical answer never dispatches a second turn", async () => {
@@ -433,6 +442,7 @@ describe("block response routes — question answers", () => {
     expect(afterFailureBody.own).toEqual({
       kind: "question",
       answer: "Production",
+      notifiedAt: null,
     });
     expect(timelineTexts(await timelineOf(deps, workbenchId))).toEqual([]);
 

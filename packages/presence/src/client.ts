@@ -112,6 +112,14 @@ export interface PresenceHandle {
   subscribe(listener: (members: readonly PresenceState[]) => void): () => void;
   /** Subscribes to every failed join/heartbeat/leave/update request. */
   onError(listener: (error: PresenceError) => void): () => void;
+  /**
+   * Subscribes to every successful join or heartbeat — the client's only
+   * signals that the connection is healthy again after failures. A consuming
+   * UI that showed a reconnecting/degraded caption from `onError` clears it
+   * here, not from the SSE snapshot (the stream stays open even while join
+   * is failing).
+   */
+  onRecovered(listener: () => void): () => void;
   /** Leaves the room and tears down the stream/heartbeat timer. */
   disconnect(): void;
 }
@@ -220,6 +228,7 @@ export function connectPresence(
 
   const listeners = new Set<(members: readonly PresenceState[]) => void>();
   const errorListeners = new Set<(error: PresenceError) => void>();
+  const recoveredListeners = new Set<() => void>();
   let latestMembers: readonly PresenceState[] = [];
   let disconnected = false;
   // Whether the last join attempt is known to have succeeded server-side.
@@ -256,6 +265,10 @@ export function connectPresence(
     const error: PresenceError =
       status === undefined ? { operation } : { operation, status };
     for (const listener of errorListeners) listener(error);
+  };
+
+  const notifyRecovered = () => {
+    for (const listener of recoveredListeners) listener();
   };
 
   const post = (operation: PresenceOperation, body: unknown) =>
@@ -296,6 +309,7 @@ export function connectPresence(
       }
       joinFailureCount = 0;
       joined = true;
+      notifyRecovered();
       flushPendingUpdates();
       if (doc === undefined) return;
       void response.json().then((body) => {
@@ -332,6 +346,7 @@ export function connectPresence(
         }
         return;
       }
+      notifyRecovered();
       flushPendingUpdates();
     });
   }
@@ -452,6 +467,13 @@ export function connectPresence(
       };
     },
 
+    onRecovered(listener) {
+      recoveredListeners.add(listener);
+      return () => {
+        recoveredListeners.delete(listener);
+      };
+    },
+
     disconnect() {
       if (disconnected) return;
       disconnected = true;
@@ -459,6 +481,7 @@ export function connectPresence(
       source.close();
       listeners.clear();
       errorListeners.clear();
+      recoveredListeners.clear();
       if (doc !== undefined && onLocalDocUpdate !== undefined) {
         doc.off("update", onLocalDocUpdate);
       }

@@ -48,12 +48,7 @@ import type { AssetService } from "@intx/hub-sessions";
 
 import { isWorkbenchHostDefinitionName } from "@corbits/chat/workbench-host-naming";
 
-import {
-  reindexPinnedSkills,
-  withAgentModel,
-  withAgentToolPackagePin,
-  readAgentCapabilities,
-} from "./agent-workflow";
+import { commitAgentCapabilityAdd } from "./capability-add";
 import {
   AddCapabilityInput,
   assertCapabilityInInventory,
@@ -61,10 +56,8 @@ import {
   type CapabilityInventoryProvider,
 } from "./capability-inventory";
 import {
-  readAgentDefinitionWorkflowJson,
   RetiredWorkflowEnvelopeError,
   statusForAgentDefinitionDeployError,
-  writeAndDeployAgentDefinition,
   WorkflowAuthorError,
   type AgentDefinitionDeployer,
 } from "./definition-asset";
@@ -242,68 +235,19 @@ export function createWorkflowCapabilityRoutes(
     // tenant-session route's own fail-closed check.
     assertCapabilityInInventory(body, inventory);
 
-    const workflowJson = await readAgentDefinitionWorkflowJson(
-      deps.assetService,
-      row.assetId,
-    );
-
-    let nextWorkflowJson: string;
-    let message: string;
-    let skills = await deps.skillsStore.getSkills(row.assetId);
-    let nextSkills: readonly string[] | null = null;
-
-    switch (body.kind) {
-      case "toolPackage": {
-        nextWorkflowJson = withAgentToolPackagePin(workflowJson, {
-          name: body.name,
-          version: "*",
-        });
-        message = `Add ${body.name} to ${row.name}`;
-        break;
-      }
-      case "skill": {
-        nextSkills = skills.includes(body.name)
-          ? skills
-          : [...skills, body.name];
-        nextWorkflowJson = reindexPinnedSkills(
-          workflowJson,
-          await deps.skillIndex.resolve(
-            scope.tenantId,
-            scope.principalId,
-            nextSkills,
-          ),
-        );
-        skills = nextSkills;
-        message = `Add ${body.name} skill to ${row.name}`;
-        break;
-      }
-      case "model": {
-        nextWorkflowJson = withAgentModel(workflowJson, body.canonicalName);
-        message = `Set ${row.name}'s model to ${body.canonicalName}`;
-        break;
-      }
-    }
-
-    await writeAndDeployAgentDefinition({
+    const added = await commitAgentCapabilityAdd({
+      db: deps.db,
       assetService: deps.assetService,
       deployer: deps.deployer,
+      skillsStore: deps.skillsStore,
+      skillIndex: deps.skillIndex,
       tenantId: scope.tenantId,
       principalId: scope.principalId,
       assetId: row.assetId,
       handle: row.name,
-      workflowJson: nextWorkflowJson,
-      message,
+      body,
     });
-    if (nextSkills !== null) {
-      await deps.skillsStore.setSkills(row.assetId, nextSkills);
-    }
-
-    const capabilities = readAgentCapabilities(nextWorkflowJson);
-    return c.json({
-      toolPackagePins: capabilities.toolPackagePins,
-      skills,
-      model: capabilities.model,
-    });
+    return c.json(added);
   });
 
   return app;

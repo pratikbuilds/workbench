@@ -23,11 +23,10 @@
 // the same shape.
 
 import { Avatar, Badge, Button } from "@corbits/react-ui";
-import type { AvatarTone, BadgeTone } from "@corbits/react-ui";
+import type { BadgeTone } from "@corbits/react-ui";
 import { Fragment } from "react";
-import type { CSSProperties } from "react";
 
-import { AVATAR_IDENTITY_CLASS, generatedAvatarStyle } from "./avatar-identity";
+import { CorbitAvatar, avatarClassForPrincipal } from "./avatar";
 import { Markdown } from "./markdown";
 import { CHAT_STRINGS } from "./strings";
 
@@ -224,25 +223,27 @@ function SuggestedFixBlock({ fix }: { readonly fix: PrThreadSuggestedFix }) {
 
 function ReplyRow({ reply }: { readonly reply: PrThreadReply }) {
   const isHuman = reply.role === "human";
-  const avatarTone: AvatarTone = isHuman ? "neutral" : "agent";
   // No stable reviewer id reaches this pure view (see the file header) —
   // the reviewer's own display name is already the identity this row
   // shows, so it doubles as the hash seed for a deterministic per-person
   // fill (same reviewer, same color, on every reply and every reload).
   return (
-    <div
-      className="chat-pr-reply"
-      {...(isHuman
-        ? { style: generatedAvatarStyle(reply.sender) as CSSProperties }
-        : {})}
-    >
-      <Avatar
-        initials={initialsFromName(reply.sender)}
-        label={reply.sender}
-        tone={avatarTone}
-        size="lg"
-        {...(isHuman ? { className: AVATAR_IDENTITY_CLASS } : {})}
-      />
+    <div className="chat-pr-reply">
+      {isHuman ? (
+        <Avatar
+          initials={initialsFromName(reply.sender)}
+          label={reply.sender}
+          tone="neutral"
+          size="lg"
+          className={avatarClassForPrincipal(reply.sender)}
+        />
+      ) : (
+        <CorbitAvatar
+          ariaLabel={reply.sender}
+          size="lg"
+          className="sender-avatar"
+        />
+      )}
       <div className="chat-pr-reply-body">
         <div className="chat-pr-reply-head">
           <span className="chat-pr-reply-sender">{reply.sender}</span>
@@ -320,11 +321,9 @@ function ThreadFooter({ footer }: { readonly footer: PrThreadFooter }) {
     <footer className="chat-pr-foot">
       <span className="chat-pr-wait-avatars" aria-hidden="true">
         {footer.nextReviewers.map((reviewer) => (
-          <Avatar
+          <CorbitAvatar
             key={reviewer.label}
-            initials={reviewer.initials}
-            label={reviewer.label}
-            tone="agent"
+            ariaLabel={reviewer.label}
             size="sm"
           />
         ))}

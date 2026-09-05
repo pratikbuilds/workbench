@@ -27,6 +27,7 @@ import {
   type WorkbenchTenancyStore,
   type WorkbenchTurnQueue,
   type TurnCancelRegistry,
+  type TurnMailCorrelationStore,
   type ChatPlatform,
   type ChatStore,
   type RoomMessageStore,
@@ -76,6 +77,9 @@ export type MountWorkbenchSlackTagDeps = {
   /** The same cancellation registry `createChatRoutes` is given
    * (CL-7201) — shared, never a second instance. */
   readonly turnCancellation: TurnCancelRegistry;
+  /** The same dispatch-mail correlation `createChatRoutes` is given
+   * (CL-6314) — shared, never a second instance. */
+  readonly turnMailCorrelation?: TurnMailCorrelationStore;
 };
 
 export type MountedWorkbenchSlackTag = { readonly mounted: boolean };
@@ -216,6 +220,9 @@ export async function mountWorkbenchSlackTag(
           publish: deps.workbenchSubscribers.publish,
           turnQueue: deps.turnQueue,
           turnCancellation: deps.turnCancellation,
+          ...(deps.turnMailCorrelation !== undefined
+            ? { turnMailCorrelation: deps.turnMailCorrelation }
+            : {}),
         },
         {
           tenantId: input.tenantId,

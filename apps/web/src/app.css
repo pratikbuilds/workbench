@@ -730,6 +730,15 @@ select:disabled,
   color: var(--muted-foreground);
 }
 
+/* A subtitle that owns a control (thread close) must stay fully
+   hit-testable — overflow:hidden on the 3rem bar would clip it. The
+   title trail still gives. */
+.stage-top-bar-sub:has(button) {
+  overflow: visible;
+  flex-shrink: 0;
+  min-width: min-content;
+}
+
 .stage-top-bar-actions {
   display: flex;
   flex-shrink: 0;
@@ -1121,7 +1130,15 @@ select:disabled,
 .shell-canvas-pane-actions {
   display: flex;
   flex-shrink: 0;
+  align-items: center;
   gap: 0.25rem;
+}
+
+.shell-artifact-presence-status {
+  padding: 0 0.35rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
 }
 
 .shell-profile-pane-hint {
@@ -1313,12 +1330,7 @@ select:disabled,
   outline-offset: -1px;
 }
 
-/* `Avatar`'s own root span carries `role="img"`, not a `data-slot` — this
-   used to target a `[data-slot="avatar"]` that react-ui's `Avatar` has
-   never actually rendered, so the account avatar silently fell back to
-   react-ui's own default sizing/shape. Geometry only: background/text
-   color come from the generated per-person fill
-   (`.avatar-identity-generated`, lower specificity, so it still wins). */
+/* `Avatar`'s own root span carries `role="img"`, not a `data-slot`. */
 .shell-sidebar-account-btn [role="img"] {
   flex-shrink: 0;
   width: 2.1rem;
@@ -1441,6 +1453,13 @@ select:disabled,
 
 .settings-nav-advanced-hint {
   margin: 0.2rem 0 0.3rem;
+  padding: 0 0.42rem;
+  font-size: 0.6875rem;
+  color: var(--shell-panel-faint);
+}
+
+.settings-nav-access-error {
+  margin: 0 0 0.3rem;
   padding: 0 0.42rem;
   font-size: 0.6875rem;
   color: var(--shell-panel-faint);
@@ -2967,48 +2986,6 @@ tr.insights-row-clickable:hover {
   margin-left: auto;
   font-size: 0.68rem;
   color: var(--muted-foreground);
-}
-
-/* Create-agent panel's identity row (`create-agent-panel.tsx`): a live
-   Avatar preview beside a row of tone swatches. Preview-only — see the
-   component's own doc comment on why no color is persisted today. */
-.create-agent-identity {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.create-agent-tone-row {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.create-agent-tone-swatch {
-  width: 1.5rem;
-  height: 1.5rem;
-  border: 2px solid transparent;
-  cursor: pointer;
-  padding: 0;
-}
-
-.create-agent-tone-swatch[aria-pressed="true"] {
-  border-color: var(--foreground);
-}
-
-.create-agent-tone-neutral {
-  background: var(--muted);
-}
-
-.create-agent-tone-agent {
-  background: var(--primary);
-}
-
-.create-agent-tone-agent2 {
-  background: var(--accent);
-}
-
-.create-agent-tone-agent3 {
-  background: var(--success);
 }
 
 /* The optional "what should this agent do?" field: visually quieter than

@@ -527,6 +527,41 @@ export const chatMigrations: readonly ChatMigration[] = [
         ADD COLUMN IF NOT EXISTS "notification_claim_token" text;
     `,
   },
+  {
+    // CL-6314: which workbench message a dispatch mail answers, so an
+    // agent's reply inherits its source message's thread. Insert-only
+    // correlation — no backfill, nothing to migrate: mails sent before
+    // this landed simply have no row, and replies to them post
+    // unthreaded exactly as before.
+    name: "0028_turn_mail_correlation",
+    sql: `
+      CREATE TABLE IF NOT EXISTS "chat"."turn_mail_correlation" (
+        "tenant_id" text NOT NULL,
+        "mail_id" text NOT NULL,
+        "workbench_id" text NOT NULL,
+        "source_message_id" text NOT NULL,
+        "recorded_at" timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY ("tenant_id", "mail_id")
+      );
+    `,
+  },
+  {
+    // CL-7104: the RFC 5322 `Message-ID` a timeline row was dispatched
+    // as. Derived from the row's own id, so there is nothing to
+    // backfill: a row dispatched before this landed answers to the same
+    // `<id@domain>` it always did, and a row that was never dispatched
+    // stays null. Indexed for the inbound direction — a reply's
+    // `In-Reply-To` names a Message-ID, and the row it belongs to is
+    // found by that header, never by the sender's address.
+    name: "0029_workbench_messages_mail_message_id",
+    sql: `
+      ALTER TABLE "chat"."workbench_messages"
+        ADD COLUMN IF NOT EXISTS "mail_message_id" text;
+
+      CREATE INDEX IF NOT EXISTS "workbench_messages_mail_message_id_idx"
+        ON "chat"."workbench_messages" ("tenant_id", "mail_message_id");
+    `,
+  },
 ];
 
 /**

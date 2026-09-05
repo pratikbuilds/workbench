@@ -11,7 +11,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 
-import { useWorkbenchStream } from "../src/use-workbench-stream";
+import {
+  parseStreamEventJson,
+  useWorkbenchStream,
+} from "../src/use-workbench-stream";
 
 const realEventSource = globalThis.EventSource;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -44,6 +47,10 @@ class StubEventSource {
     } as MessageEvent);
   }
 
+  emitRaw(eventType: string, data: string) {
+    this.listeners.get(eventType)?.({ data } as MessageEvent);
+  }
+
   close() {
     this.readyState = StubEventSource.CLOSED;
   }
@@ -64,11 +71,14 @@ afterEach(() => {
   StubEventSource.instances = [];
 });
 
-function mount(intervals: {
-  pollMs: number;
-  baseDelayMs: number;
-  maxDelayMs: number;
-}) {
+function mount(
+  intervals: {
+    pollMs: number;
+    baseDelayMs: number;
+    maxDelayMs: number;
+  },
+  onParseError?: (eventType: string) => void,
+) {
   globalThis.EventSource = StubEventSource as unknown as typeof EventSource;
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -84,6 +94,7 @@ function mount(intervals: {
         pollCount += 1;
       },
       intervals,
+      onParseError,
     );
     return null;
   }
@@ -194,5 +205,70 @@ describe("useWorkbenchStream (reconnect + poll wiring)", () => {
       ["chat.pin", { messageId: "m1", pinned: true }],
     ]);
     harness.unmount();
+  });
+
+  test("invalid JSON on chat.message is not forwarded and polls immediately (CL-6837)", async () => {
+    const parseErrors: string[] = [];
+    const harness = mount(
+      {
+        pollMs: 1000,
+        baseDelayMs: 5000,
+        maxDelayMs: 5000,
+      },
+      (eventType) => parseErrors.push(eventType),
+    );
+    harness.latest().open();
+    const pollsAfterOpen = harness.pollCount();
+
+    harness.latest().emitRaw("chat.message", "not-json{");
+
+    expect(harness.events()).toEqual([]);
+    expect(harness.pollCount()).toBe(pollsAfterOpen + 1);
+    expect(parseErrors).toEqual(["chat.message"]);
+    harness.unmount();
+  });
+
+  test("valid JSON on chat.message still forwards and does not poll (CL-6837)", async () => {
+    const harness = mount({
+      pollMs: 1000,
+      baseDelayMs: 5000,
+      maxDelayMs: 5000,
+    });
+    harness.latest().open();
+    const pollsAfterOpen = harness.pollCount();
+
+    harness.latest().emit("chat.message", { id: "m1", parts: [] });
+
+    expect(harness.events()).toEqual([
+      ["chat.message", { id: "m1", parts: [] }],
+    ]);
+    expect(harness.pollCount()).toBe(pollsAfterOpen);
+    harness.unmount();
+  });
+});
+
+describe("parseStreamEventJson (CL-6837)", () => {
+  test("parses a JSON object through arktype", () => {
+    expect(parseStreamEventJson('{"id":"m1"}')).toEqual({
+      ok: true,
+      data: { id: "m1" },
+    });
+  });
+
+  test("undefined payload is a successful empty event", () => {
+    expect(parseStreamEventJson(undefined)).toEqual({
+      ok: true,
+      data: undefined,
+    });
+  });
+
+  test("invalid JSON is a parse miss, not a thrown error", () => {
+    expect(parseStreamEventJson("not-json{")).toEqual({ ok: false });
+  });
+
+  test("a non-string payload is a parse miss", () => {
+    expect(parseStreamEventJson({ id: "already-parsed" })).toEqual({
+      ok: false,
+    });
   });
 });

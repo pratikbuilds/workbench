@@ -2,14 +2,24 @@
 // filename: a schema set up under an older @intx/db migration list (here,
 // the pre-re-pin numbering of workbench's own two migrations) is refused
 // with the reset instruction instead of being patched incrementally.
-// DB-gated: skipped when DATABASE_URL is unset.
+// The old-numbering suite is DB-gated (skipped when DATABASE_URL is unset).
+// The digest-handoff SQL assertion always runs.
 import { expect, test } from "bun:test";
 
-import { dbTargetFromUrl, loadPostgres, setupDatabase } from "./db-setup";
+import {
+  dbTargetFromUrl,
+  DIGEST_HANDOFF_SQL,
+  loadPostgres,
+  setupDatabase,
+} from "./db-setup";
 import { dbGate } from "./e2e/db-gate";
 
 const databaseUrl = process.env["DATABASE_URL"] ?? "";
 const describeIfDb = dbGate(databaseUrl, import.meta.path);
+
+test("digest handoff SQL bumps updated_at so copied enablement is not pristine", () => {
+  expect(DIGEST_HANDOFF_SQL).toMatch(/updated_at\s*=\s*now\(\)/);
+});
 
 const OLD_NUMBERING_TAIL = [
   "0084_delete_orphaned_credential_grants.sql",

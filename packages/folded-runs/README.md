@@ -25,6 +25,10 @@ or a host-specific package such as `@corbits/chat`.
   7-day idle ttl refreshed on every access (CL-7223): a key going
   momentarily unreachable (idle sleep, a sweep) does not evict it, so
   only a key nobody has asked for in a week is treated as gone for good.
+  Independent cache instances mint independent keys for the same string,
+  so a host constructs one process-wide cache and passes it to every
+  mail sender (chat, webhook, routine, one-shot) rather than constructing
+  one per consumer (CL-7284).
 - **Run lookups** (`./src/runs.ts`) — resolving a run by id or address, and
   bridging a run's principal to its live session via the shared-principal
   bridge.
@@ -53,7 +57,7 @@ or a host-specific package such as `@corbits/chat`.
   `"failed"`) or `FoldedRunTimedOutError` (its timeout elapsed first). It
   exists for a caller with no Inbox to hang an async delivery on — a
   Myra one-shot drafting/planning call (`@corbits/agent-directory`'s
-  `agent-definition-drafting.ts`, `@corbits/routines`' `myra-drafting.ts`)
+  `agent-definition-drafting.ts`)
   turns that same stream into an awaitable promise instead of tracking a
   long-lived run. Every settle path (success, run failure, timeout, or a
   send-path throw) tears the launched run down through the required

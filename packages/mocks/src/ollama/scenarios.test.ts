@@ -146,20 +146,20 @@ describe("ollama.reply adversarial scenarios", () => {
     expect(body.choices[0]?.finish_reason).toBe("length");
   });
 
-  test("hallucinatedToolName calls a plausible but nonexistent tool", async () => {
+  test("hallucinatedToolName calls load_skill instead of skills_load", async () => {
     const ollama = createOllamaMock();
     ollama.onChat(() => ollama.reply.hallucinatedToolName());
 
     const response = await chat(ollama.fetch, {
       model: "qwen3.8:27b",
       messages: [{ role: "user", content: "load the git skill" }],
-      tools: [{ type: "function", function: { name: "load_skill" } }],
+      tools: [{ type: "function", function: { name: "skills_load" } }],
     });
     const body = (await response.json()) as ChatCompletionBody;
 
     const name = body.choices[0]?.message.tool_calls?.[0]?.function.name;
-    expect(name).toBe("skills_load");
-    expect(name).not.toBe("load_skill");
+    expect(name).toBe("load_skill");
+    expect(name).not.toBe("skills_load");
   });
 });
 

@@ -61,12 +61,16 @@ import {
 import type { BringInListFailure, BringInMember } from "./mentions";
 import { PinnedStrip } from "./pinned-strip";
 import { SLASH_COMMANDS } from "./slash-commands";
-import { failedTurnModelChoices } from "./failed-turn-models";
+import {
+  failedTurnModelChoices,
+  failedTurnToolCapableModelChoices,
+} from "./failed-turn-models";
 import { CHAT_STRINGS } from "./strings";
 import { displayWorkbenchTitle } from "./workbench-display-title";
 import {
   useStreamingReply,
   isAwaitingReply,
+  lastHumanMessageParts,
   typingAgentNames,
 } from "./streaming-reply";
 import { useTurnActivity, TurnActivityStrip } from "./turn-activity";
@@ -74,10 +78,17 @@ import type { StreamingReplyState } from "./streaming-reply";
 import {
   AgentBadge,
   WorkbenchTimeline,
+  displayNameFromHandle,
+  localPartOf,
   messageDomId,
   messageText,
 } from "./timeline";
 import type { FailedTurnRecovery } from "./timeline";
+import {
+  agentDisplayNamesFromAgents,
+  displayNameForAddress,
+  type AgentDisplayNames,
+} from "./agent-display-names";
 import { NoUsableModelBanner } from "./no-usable-model-banner";
 import { ResumeFailedBanner } from "./resume-failed-banner";
 import type {
@@ -105,13 +116,14 @@ import {
   applyStreamReaction,
   useWorkbenchFeed,
 } from "./use-workbench-feed";
-import { generatedAvatarStyle } from "./avatar-identity";
+import { CorbitAvatar, avatarClassForPrincipal } from "./avatar";
 import { useWorkbenchPresenceRoster } from "./workbench-presence";
 import { type } from "arktype";
 import {
   ChatMessageEventData,
   ChatPinEventData,
   ChatReactionEventData,
+  ChatSettingsEventData,
 } from "@corbits/chat/stream-events";
 import { useThreadNavigation } from "./use-thread-navigation";
 import { mergePendingSends, useOptimisticSends } from "./use-optimistic-sends";
@@ -145,117 +157,99 @@ export type TenantResolution =
  * One live presence entry for the workbench's who's-here stack (CL-6328) —
  * derived from this workbench's own `/stream` connection
  * (`useWorkbenchPresenceRoster`), never a second connection or an HTTP
- * heartbeat poll. `displayName`/`color`/`textColor` are resolved
- * client-side against the workbench's own participants and
- * `generatedAvatarStyle`'s deterministic per-principal fill, since the
- * roster itself carries only ids.
+ * heartbeat poll. The roster carries only ids, so display names and avatar
+ * classes resolve client-side against the workbench's participants.
  */
 export interface PresenceMember {
   readonly principalId: string;
   readonly displayName: string;
-  readonly color: string;
-  readonly textColor: string;
+  readonly avatarClassName: string;
 }
 
-/** One entry in the header's combined who's-active stack — an agent
- * participant or a live human, normalized to the one shape the stack
- * renders regardless of source. */
+/** One entry in the header's static member stack — an agent or a roster
+ * human, normalized to the one shape the square stack renders. Live
+ * presence uses `PresenceMember` in a separate round stack. */
 export interface TeamAvatarEntry {
   readonly key: string;
   readonly initials: string;
   readonly label: string;
   readonly tone: "agent" | "neutral";
-  readonly color?: string;
-  readonly textColor?: string;
+  readonly avatarClassName?: string;
 }
 
 /** How many avatars the header shows before collapsing the rest into a
- * "+N" chip. */
+ * "+N" chip. Shared by the static member stack and the live presence
+ * stack so neither overflows the 3rem bar. */
 export const TEAM_AVATAR_STACK_LIMIT = 6;
 
+/** A crumb the host's `StageTopBar` can render — label plus an optional
+ * parent href. The last crumb is the current page. */
+export type ChatHeaderCrumb = {
+  readonly label: string;
+  readonly href?: string;
+};
+
+/** Chrome the host lifts into `StageTopBar` (`crumbs` / `subtitle` /
+ * `actions`) so `/w` does not keep a second identity row. */
+export type ChatHeaderChrome = {
+  readonly crumbs: readonly ChatHeaderCrumb[];
+  readonly subtitle?: ReactNode;
+  readonly actions?: ReactNode;
+};
+
+const WORKBENCHES_LIST_CHROME: ChatHeaderChrome = {
+  crumbs: [{ label: CHAT_STRINGS.chatsSectionLabel }],
+};
+
 /**
- * Every currently-active member of the workbench, for the header's
- * overlapping avatar stack: every agent participant on the workbench (agents
- * are always "active" — they have no presence concept of their own) plus
- * every human on the roster and every human currently reflected in live
- * presence. Agents first since they're a workbench's stable roster; humans
- * follow. Roster humans are included even when presence is empty
- * (CL-6779) — onboarding/template rooms often have the signed-in human as
- * a participant before any `chat.presence.snapshot` arrives, and omitting
- * them left the stack agent-only.
+ * The workbench's static member stack: every agent participant plus every
+ * human on the roster. Agents first (they have no presence concept of
+ * their own); humans follow. Roster humans are included even when live
+ * presence is empty (CL-6779) — onboarding/template rooms often list the
+ * signed-in human as a participant before any `chat.presence.snapshot`
+ * arrives. Live who's-here is a separate round stack, not mixed in here.
  *
- * Each agent gets its own `generatedAvatarStyle` fill keyed by address
- * (CL-6594) — the same deterministic-per-principal machinery humans
- * already use — rather than one shared CSS accent color for every
- * agent, so two agents in the same room never render as
- * indistinguishable avatars.
+ * Each person gets a stable generated color keyed by address. Human labels
+ * prefer `currentUser.name` when the roster entry
+ * is the signed-in reader — never a raw handle when a display name exists.
  */
-export function buildTeamAvatarStack(
+export function buildMemberAvatarStack(
   participants: readonly ParticipantRecord[],
-  presenceMembers: readonly PresenceMember[],
+  displayNames?: AgentDisplayNames,
+  currentUser?: CurrentUser,
 ): readonly TeamAvatarEntry[] {
   const agents = participants
     .filter((participant) => isAgentAddress(participant.address))
     .map((participant) => {
-      const style = generatedAvatarStyle(participant.address);
+      const label =
+        displayNameForAddress(participant.address, displayNames) ??
+        displayNameFromHandle(participant.handle);
       return {
         key: participant.address,
-        initials: participant.handle.slice(0, 1).toUpperCase(),
-        label: participant.handle,
+        initials: "",
+        label,
         tone: "agent" as const,
-        color: style["--avatar-identity-bg"],
-        textColor: style["--avatar-identity-fg"],
       };
     });
 
-  const presenceById = new Map(
-    presenceMembers.map((member) => [member.principalId, member] as const),
-  );
-  const rosterHumans = participants.filter(
-    (participant) => !isAgentAddress(participant.address),
-  );
-  const rosterHumanIds = new Set(
-    rosterHumans.map((participant) => participant.address),
-  );
-
-  // Prefer live-presence display name/color when the roster human is also
-  // present; otherwise fall back to the participant handle + generated fill
-  // so onboarding/template rooms still show the signed-in human.
-  const humansFromRoster = rosterHumans.map((participant) => {
-    const live = presenceById.get(participant.address);
-    if (live !== undefined) {
+  const humans = participants
+    .filter((participant) => !isAgentAddress(participant.address))
+    .map((participant) => {
+      const label = typingLabel(
+        localPartOf(participant.address),
+        participants,
+        currentUser,
+      );
       return {
-        key: live.principalId,
-        initials: live.displayName.slice(0, 1).toUpperCase(),
-        label: live.displayName,
+        key: participant.address,
+        initials: label.slice(0, 1).toUpperCase(),
+        label,
         tone: "neutral" as const,
-        color: live.color,
-        textColor: live.textColor,
+        avatarClassName: avatarClassForPrincipal(participant.address),
       };
-    }
-    const style = generatedAvatarStyle(participant.address);
-    return {
-      key: participant.address,
-      initials: participant.handle.slice(0, 1).toUpperCase(),
-      label: participant.handle,
-      tone: "neutral" as const,
-      color: style["--avatar-identity-bg"],
-      textColor: style["--avatar-identity-fg"],
-    };
-  });
+    });
 
-  const humansFromPresenceOnly = presenceMembers
-    .filter((member) => !rosterHumanIds.has(member.principalId))
-    .map((member) => ({
-      key: member.principalId,
-      initials: member.displayName.slice(0, 1).toUpperCase(),
-      label: member.displayName,
-      tone: "neutral" as const,
-      color: member.color,
-      textColor: member.textColor,
-    }));
-
-  return [...agents, ...humansFromRoster, ...humansFromPresenceOnly];
+  return [...agents, ...humans];
 }
 
 type WorkbenchesState =
@@ -594,6 +588,7 @@ function ChatWorkspaceInner({
   connectGithubActions,
   connectServiceActions,
   headerLeading,
+  headerSlot,
   registerComposerInsert,
   listMembers,
   onCreateRoutineInSpace,
@@ -663,8 +658,12 @@ function ChatWorkspaceInner({
   readonly connectServiceActions?: ConnectServiceActions;
   /** Host-supplied control rendered first in the workbench header — the
    * shell's single col2 toggle, so chat carries the same top-bar chrome as
-   * every other stage surface. */
+   * every other stage surface. Unused when `headerSlot` owns the bar. */
   readonly headerLeading?: ReactNode;
+  /** Host-owned stage bar. When set, identity and primary actions render
+   * through this slot (`StageTopBar`'s crumbs / subtitle / actions) instead
+   * of `.chat-workbench-header`. */
+  readonly headerSlot?: (chrome: ChatHeaderChrome) => ReactNode;
   /**
    * Lets the host (command palette, canvas "insert into composer", …) push
    * text into the live composer. Called with the insert fn when a composer
@@ -959,17 +958,18 @@ function ChatWorkspaceInner({
       switch (eventType) {
         case "chat.message": {
           const parsed = ChatMessageEventData(data);
-          if (!(parsed instanceof type.errors)) {
-            applyStreamMessage(queryClient, tenantId, activeWorkbenchId, {
-              id: parsed.id,
-              createdAt: parsed.createdAt,
-              parts: parsed.parts,
-              sender: parsed.sender,
-              ...(parsed.threadId !== null
-                ? { threadId: parsed.threadId }
-                : {}),
-            });
+          if (parsed instanceof type.errors) {
+            toast(CHAT_STRINGS.streamMessageDropped);
+            refreshFeed();
+            break;
           }
+          applyStreamMessage(queryClient, tenantId, activeWorkbenchId, {
+            id: parsed.id,
+            createdAt: parsed.createdAt,
+            parts: parsed.parts,
+            sender: parsed.sender,
+            ...(parsed.threadId !== null ? { threadId: parsed.threadId } : {}),
+          });
           break;
         }
         case "chat.reaction": {
@@ -992,6 +992,26 @@ function ChatWorkspaceInner({
           }
           break;
         }
+        case "chat.settings": {
+          const parsed = ChatSettingsEventData(data);
+          if (!(parsed instanceof type.errors)) {
+            connectGithubActions?.notifySettingsChanged().catch((cause) => {
+              reportError(cause, {
+                operation: "chat.notifyGithubSettingsChanged",
+                tenantId,
+                roomId: activeWorkbenchId,
+              });
+            });
+            connectServiceActions?.notifySettingsChanged().catch((cause) => {
+              reportError(cause, {
+                operation: "chat.notifyServiceSettingsChanged",
+                tenantId,
+                roomId: activeWorkbenchId,
+              });
+            });
+          }
+          break;
+        }
         case WORKBENCHES_MUTATED_STREAM_TYPE: {
           applyStreamWorkbenchesMutated(data);
           break;
@@ -999,6 +1019,12 @@ function ChatWorkspaceInner({
       }
     },
     refreshFeed,
+    {},
+    (eventType) => {
+      if (eventType !== "chat.message") return;
+      toast(CHAT_STRINGS.streamMessageDropped);
+      refreshFeed();
+    },
   );
 
   /** The one door into the workbench settings surface — the gear button and
@@ -1169,6 +1195,14 @@ function ChatWorkspaceInner({
     workbenchAgentsQuery.data?.length === 1
       ? workbenchAgentsQuery.data[0]?.definitionAssetId
       : undefined;
+  // Person-facing display names for this workbench's agents (CL-6424),
+  // keyed by participant address. Memoized so `MessageParts`'s memo guard
+  // (CL-6625) keeps working: a fresh Map every render would read as new
+  // props on every row and re-render the whole timeline per token.
+  const agentDisplayNames: AgentDisplayNames = useMemo(
+    () => agentDisplayNamesFromAgents(workbenchAgentsQuery.data ?? []),
+    [workbenchAgentsQuery.data],
+  );
   const failedTurnRecovery = useMemo((): FailedTurnRecovery => {
     const definitionIdByAddress: Record<string, string> = {};
     for (const agent of workbenchAgentsQuery.data ?? []) {
@@ -1176,6 +1210,9 @@ function ChatWorkspaceInner({
     }
     return {
       models: failedTurnModelChoices(catalogQuery.data ?? []),
+      toolCapableModels: failedTurnToolCapableModelChoices(
+        catalogQuery.data ?? [],
+      ),
       definitionIdByAddress,
       onApplyModel: async ({ definitionId, address, canonicalName }) => {
         if (activeWorkbenchId === null) return;
@@ -1195,6 +1232,18 @@ function ChatWorkspaceInner({
     tenantId,
     activeWorkbenchId,
   ]);
+
+  const addressedMessageParts = useMemo(
+    () =>
+      lastHumanMessageParts(
+        mergePendingSends(
+          messagesState.kind === "ready" ? messagesState.items : [],
+          pendingSends,
+          currentUser?.principalId,
+        ),
+      ),
+    [messagesState, pendingSends, currentUser?.principalId],
+  );
 
   // The mention popover's "Bring in…" group: only a `workbench` grows its
   // participants after creation (a chat's counterpart is fixed at
@@ -1283,7 +1332,6 @@ function ChatWorkspaceInner({
   const presenceMembers: readonly PresenceMember[] = useMemo(
     () =>
       presenceRoster.map((member) => {
-        const style = generatedAvatarStyle(member.principalId);
         return {
           principalId: member.principalId,
           displayName: typingLabel(
@@ -1291,29 +1339,235 @@ function ChatWorkspaceInner({
             activeWorkbench?.participants ?? [],
             currentUser,
           ),
-          color: style["--avatar-identity-bg"],
-          textColor: style["--avatar-identity-fg"],
+          avatarClassName: avatarClassForPrincipal(member.principalId),
         };
       }),
     [presenceRoster, activeWorkbench?.participants, currentUser],
   );
 
-  // Team stack: every active agent + live human for the top bar.
-  const teamStack = buildTeamAvatarStack(
+  // Static member stack (square) vs live presence (round) — never one
+  // combined circular team stack.
+  const memberStack = buildMemberAvatarStack(
     activeWorkbench?.participants ?? [],
-    presenceMembers,
+    agentDisplayNames,
+    currentUser,
   );
-  const visibleTeamStack = teamStack.slice(0, TEAM_AVATAR_STACK_LIMIT);
-  const teamStackOverflow = teamStack.length - visibleTeamStack.length;
+  const visibleMemberStack = memberStack.slice(0, TEAM_AVATAR_STACK_LIMIT);
+  const memberStackOverflow = memberStack.length - visibleMemberStack.length;
+  const visiblePresenceStack = presenceMembers.slice(
+    0,
+    TEAM_AVATAR_STACK_LIMIT,
+  );
+  const presenceStackOverflow =
+    presenceMembers.length - visiblePresenceStack.length;
+
+  const showRoomChrome =
+    workbenchesState.kind === "ready" &&
+    activeWorkbenchId !== null &&
+    !workbenchGone &&
+    !awaitingWorkbenchEvidence;
+
+  const roomTitle =
+    activeWorkbenchDisplayTitle || CHAT_STRINGS.unnamedWorkbench;
+
+  const headerActions = (
+    <>
+      {depth1Threads.length > 0 ? (
+        <details className="chat-threads-menu">
+          <summary className="chat-threads-menu-trigger">
+            {CHAT_STRINGS.threadsMenuCount(depth1Threads.length)}
+            <CaretDown className="size-3.5 opacity-70" />
+          </summary>
+          <div className="chat-threads-menu-panel" role="menu">
+            {depth1Threads.map((thread) => (
+              <div key={thread.id} className="chat-threads-menu-group">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="chat-threads-menu-item"
+                  onClick={() => {
+                    openThreadById(thread.id);
+                  }}
+                >
+                  {thread.title ??
+                    (thread.parentMessageId !== null
+                      ? `Reply · ${thread.parentMessageId.slice(0, 8)}`
+                      : "Thread")}
+                </button>
+                {(subThreadsByParentId.get(thread.id) ?? []).map(
+                  (subThread) => (
+                    <button
+                      key={subThread.id}
+                      type="button"
+                      role="menuitem"
+                      className="chat-threads-menu-item chat-threads-menu-item-nested"
+                      onClick={() => {
+                        openThreadById(subThread.id);
+                      }}
+                    >
+                      {subThread.title ??
+                        (subThread.parentMessageId !== null
+                          ? `Fork · ${subThread.parentMessageId.slice(0, 8)}`
+                          : "Sub-thread")}
+                    </button>
+                  ),
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+      {visibleMemberStack.length > 0 ? (
+        <div
+          className="chat-member-stack"
+          aria-label={CHAT_STRINGS.workbenchMembersLabel}
+        >
+          {visibleMemberStack.map((entry) =>
+            entry.tone === "agent" ? (
+              <span
+                key={entry.key}
+                className="member-avatar !overflow-hidden !bg-transparent !p-0"
+                data-agent="true"
+                title={entry.label}
+              >
+                <CorbitAvatar
+                  size="sm"
+                  ariaLabel={entry.label}
+                  className="!size-full"
+                />
+              </span>
+            ) : (
+              <span
+                key={entry.key}
+                className={`member-avatar ${entry.avatarClassName ?? ""}`}
+                title={entry.label}
+              >
+                {entry.initials}
+              </span>
+            ),
+          )}
+          {memberStackOverflow > 0 ? (
+            <span
+              className="chat-member-stack-overflow"
+              title={CHAT_STRINGS.teamStackOverflow(memberStackOverflow)}
+            >
+              +{memberStackOverflow}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {presenceMembers.length > 0 ? (
+        <div
+          className="chat-presence-stack"
+          aria-label={CHAT_STRINGS.workbenchPresenceLabel}
+        >
+          {visiblePresenceStack.map((member) => (
+            <span
+              key={member.principalId}
+              className={`chat-presence-avatar ${member.avatarClassName}`}
+              title={member.displayName}
+            >
+              {member.displayName.slice(0, 1).toUpperCase()}
+            </span>
+          ))}
+          {presenceStackOverflow > 0 ? (
+            <span
+              className="chat-presence-stack-overflow"
+              title={CHAT_STRINGS.teamStackOverflow(presenceStackOverflow)}
+            >
+              +{presenceStackOverflow}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {offerInviteControl ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setInviteDialogOpen(true)}
+        >
+          <UserPlus />
+          {CHAT_STRINGS.inviteAgentAction}
+        </Button>
+      ) : null}
+      <div className="chat-workbench-settings-slot">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={CHAT_STRINGS.workbenchSettingsAction}
+          title={CHAT_STRINGS.workbenchSettingsAction}
+          onClick={() => openWorkbenchSettings()}
+        >
+          <SlidersHorizontal />
+        </Button>
+      </div>
+    </>
+  );
+
+  const threadBreadcrumb = inThreadView ? (
+    <nav className="chat-thread-breadcrumb" aria-label="Thread">
+      <button
+        type="button"
+        className="chat-thread-breadcrumb-link"
+        onClick={closeThread}
+      >
+        {roomTitle}
+      </button>
+      <span className="chat-thread-breadcrumb-sep" aria-hidden="true">
+        /
+      </span>
+      {openThreadParent !== undefined ? (
+        <>
+          <button
+            type="button"
+            className="chat-thread-breadcrumb-link"
+            onClick={() => {
+              openThreadById(openThreadParent.id);
+            }}
+          >
+            {openThreadParent.title ?? "Thread"}
+          </button>
+          <span className="chat-thread-breadcrumb-sep" aria-hidden="true">
+            /
+          </span>
+        </>
+      ) : null}
+      <span
+        className="chat-thread-breadcrumb-current"
+        {...(headerSlot === undefined
+          ? { "aria-current": "page" as const }
+          : {})}
+      >
+        {threadTitle}
+      </span>
+    </nav>
+  ) : null;
+
+  const roomChrome: ChatHeaderChrome = {
+    crumbs: [{ label: roomTitle }],
+    ...(inThreadView && threadBreadcrumb !== null
+      ? { subtitle: threadBreadcrumb }
+      : activeChatAgent !== undefined
+        ? { subtitle: <AgentBadge /> }
+        : {}),
+    actions: headerActions,
+  };
 
   // The workbench header only exists once a workbench is active; the loading,
   // error, and no-workbench states still carry the host's leading control (the
-  // shell's col2 toggle) so the sidebar stays reachable.
+  // shell's col2 toggle) so the sidebar stays reachable. When `headerSlot`
+  // owns the bar, that chrome lifts out of `.chat-workbench-header`.
   const bareLeadingHeader =
+    headerSlot === undefined &&
     headerLeading !== undefined &&
-    (workbenchesState.kind !== "ready" || activeWorkbenchId === null) ? (
+    !showRoomChrome ? (
       <div className="chat-workbench-header">{headerLeading}</div>
     ) : null;
+
+  const stageHeader =
+    headerSlot !== undefined
+      ? headerSlot(showRoomChrome ? roomChrome : WORKBENCHES_LIST_CHROME)
+      : bareLeadingHeader;
 
   if (
     settingsOpen &&
@@ -1365,7 +1619,7 @@ function ChatWorkspaceInner({
     <>
       <div className="chat-workspace">
         <div className="chat-main">
-          {bareLeadingHeader}
+          {stageHeader}
           {workbenchesState.kind === "loading" ? (
             <WorkbenchLoadingState />
           ) : workbenchesState.kind === "error" ? (
@@ -1414,164 +1668,20 @@ function ChatWorkspaceInner({
             <WorkbenchLoadingState />
           ) : (
             <>
-              <div className="chat-workbench-header">
-                {headerLeading}
-                {inThreadView ? (
-                  <nav className="chat-thread-breadcrumb" aria-label="Thread">
-                    <button
-                      type="button"
-                      className="chat-thread-breadcrumb-link"
-                      onClick={closeThread}
-                    >
-                      {activeWorkbenchDisplayTitle ||
-                        CHAT_STRINGS.unnamedWorkbench}
-                    </button>
-                    <span
-                      className="chat-thread-breadcrumb-sep"
-                      aria-hidden="true"
-                    >
-                      /
-                    </span>
-                    {openThreadParent !== undefined ? (
-                      <>
-                        <button
-                          type="button"
-                          className="chat-thread-breadcrumb-link"
-                          onClick={() => {
-                            openThreadById(openThreadParent.id);
-                          }}
-                        >
-                          {openThreadParent.title ?? "Thread"}
-                        </button>
-                        <span
-                          className="chat-thread-breadcrumb-sep"
-                          aria-hidden="true"
-                        >
-                          /
-                        </span>
-                      </>
-                    ) : null}
-                    <span
-                      className="chat-thread-breadcrumb-current"
-                      aria-current="page"
-                    >
-                      {threadTitle}
-                    </span>
-                  </nav>
-                ) : (
-                  <div className="chat-workbench-identity">
-                    <h2 className="chat-workbench-title">
-                      {activeWorkbenchDisplayTitle ||
-                        CHAT_STRINGS.unnamedWorkbench}
-                    </h2>
-                    {activeChatAgent !== undefined ? <AgentBadge /> : null}
-                  </div>
-                )}
-                <div className="chat-workbench-actions">
-                  {depth1Threads.length > 0 ? (
-                    <details className="chat-threads-menu">
-                      <summary className="chat-threads-menu-trigger">
-                        {CHAT_STRINGS.threadsMenuCount(depth1Threads.length)}
-                        <CaretDown className="size-3.5 opacity-70" />
-                      </summary>
-                      <div className="chat-threads-menu-panel" role="menu">
-                        {depth1Threads.map((thread) => (
-                          <div
-                            key={thread.id}
-                            className="chat-threads-menu-group"
-                          >
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="chat-threads-menu-item"
-                              onClick={() => {
-                                openThreadById(thread.id);
-                              }}
-                            >
-                              {thread.title ??
-                                (thread.parentMessageId !== null
-                                  ? `Reply · ${thread.parentMessageId.slice(0, 8)}`
-                                  : "Thread")}
-                            </button>
-                            {(subThreadsByParentId.get(thread.id) ?? []).map(
-                              (subThread) => (
-                                <button
-                                  key={subThread.id}
-                                  type="button"
-                                  role="menuitem"
-                                  className="chat-threads-menu-item chat-threads-menu-item-nested"
-                                  onClick={() => {
-                                    openThreadById(subThread.id);
-                                  }}
-                                >
-                                  {subThread.title ??
-                                    (subThread.parentMessageId !== null
-                                      ? `Fork · ${subThread.parentMessageId.slice(0, 8)}`
-                                      : "Sub-thread")}
-                                </button>
-                              ),
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  ) : null}
-                  {visibleTeamStack.length > 0 ? (
-                    <div
-                      className="chat-team-stack"
-                      aria-label={CHAT_STRINGS.workbenchMembersLabel}
-                    >
-                      {visibleTeamStack.map((entry) => (
-                        <span
-                          key={entry.key}
-                          className="chat-presence-avatar"
-                          data-agent={
-                            entry.tone === "agent" ? "true" : undefined
-                          }
-                          style={{
-                            backgroundColor: entry.color,
-                            color: entry.textColor,
-                          }}
-                          title={entry.label}
-                        >
-                          {entry.initials}
-                        </span>
-                      ))}
-                      {teamStackOverflow > 0 ? (
-                        <span
-                          className="chat-team-stack-overflow"
-                          title={CHAT_STRINGS.teamStackOverflow(
-                            teamStackOverflow,
-                          )}
-                        >
-                          +{teamStackOverflow}
-                        </span>
-                      ) : null}
+              {headerSlot === undefined ? (
+                <div className="chat-workbench-header">
+                  {headerLeading}
+                  {inThreadView ? (
+                    threadBreadcrumb
+                  ) : (
+                    <div className="chat-workbench-identity">
+                      <h2 className="chat-workbench-title">{roomTitle}</h2>
+                      {activeChatAgent !== undefined ? <AgentBadge /> : null}
                     </div>
-                  ) : null}
-                  {offerInviteControl ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setInviteDialogOpen(true)}
-                    >
-                      <UserPlus />
-                      {CHAT_STRINGS.inviteAgentAction}
-                    </Button>
-                  ) : null}
-                  <div className="chat-workbench-settings-slot">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={CHAT_STRINGS.workbenchSettingsAction}
-                      title={CHAT_STRINGS.workbenchSettingsAction}
-                      onClick={() => openWorkbenchSettings()}
-                    >
-                      <SlidersHorizontal />
-                    </Button>
-                  </div>
+                  )}
+                  <div className="chat-workbench-actions">{headerActions}</div>
                 </div>
-              </div>
+              ) : null}
               {messagesState.kind === "loading" ? (
                 <WorkbenchLoadingState />
               ) : messagesState.kind === "error" ? (
@@ -1638,6 +1748,7 @@ function ChatWorkspaceInner({
                     )}
                     participants={activeWorkbench?.participants ?? []}
                     {...(currentUser !== undefined ? { currentUser } : {})}
+                    agentDisplayNames={agentDisplayNames}
                     threadMetaByMessageId={threadMetaByMessageId}
                     threadAffordanceMode={inThreadView ? "fork" : "reply"}
                     onOpenThread={
@@ -1699,6 +1810,8 @@ function ChatWorkspaceInner({
                           names={typingAgentNames(
                             streamingReply,
                             activeWorkbench?.participants ?? [],
+                            addressedMessageParts,
+                            agentDisplayNames,
                           )}
                         />
                       )
@@ -1721,8 +1834,10 @@ function ChatWorkspaceInner({
                       ref={composerRef}
                       agents={mentionCandidatesFromParticipants(
                         activeWorkbench?.participants ?? [],
+                        agentDisplayNames,
                       )}
                       participants={activeWorkbench?.participants ?? []}
+                      agentDisplayNames={agentDisplayNames}
                       members={bringInLists.members}
                       invitableAgents={bringInLists.invitableAgents}
                       bringInLoadError={bringInLoadError}
@@ -1774,6 +1889,21 @@ function ChatWorkspaceFrame({ children }: { readonly children: ReactNode }) {
   return <div className="chat-workspace-frame">{children}</div>;
 }
 
+function withListHeader(
+  headerSlot: ((chrome: ChatHeaderChrome) => ReactNode) | undefined,
+  children: ReactNode,
+): ReactNode {
+  if (headerSlot === undefined) {
+    return <ChatWorkspaceFrame>{children}</ChatWorkspaceFrame>;
+  }
+  return (
+    <>
+      {headerSlot(WORKBENCHES_LIST_CHROME)}
+      <ChatWorkspaceFrame>{children}</ChatWorkspaceFrame>
+    </>
+  );
+}
+
 export function ChatWorkspace({
   tenant,
   workbenchId = null,
@@ -1794,6 +1924,7 @@ export function ChatWorkspace({
   connectGithubActions,
   connectServiceActions,
   headerLeading,
+  headerSlot,
   registerComposerInsert,
   listMembers,
   onCreateRoutineInSpace,
@@ -1866,8 +1997,12 @@ export function ChatWorkspace({
   readonly connectServiceActions?: ConnectServiceActions;
   /** Host-supplied control rendered first in the workbench header — the
    * shell's single col2 toggle, so chat carries the same top-bar chrome as
-   * every other stage surface. */
+   * every other stage surface. Unused when `headerSlot` owns the bar. */
   readonly headerLeading?: ReactNode;
+  /** Host-owned stage bar. When set, identity and primary actions render
+   * through this slot (`StageTopBar`'s crumbs / subtitle / actions) instead
+   * of `.chat-workbench-header`. */
+  readonly headerSlot?: (chrome: ChatHeaderChrome) => ReactNode;
   /** See `ChatWorkspaceInner`'s prop of the same name. */
   readonly registerComposerInsert?: (
     insert: ((text: string) => void) | null,
@@ -1933,6 +2068,7 @@ export function ChatWorkspace({
             : {})}
           {...(onFixConnection !== undefined ? { onFixConnection } : {})}
           {...(headerLeading !== undefined ? { headerLeading } : {})}
+          {...(headerSlot !== undefined ? { headerSlot } : {})}
           {...(registerComposerInsert !== undefined
             ? { registerComposerInsert }
             : {})}
@@ -1956,40 +2092,33 @@ export function ChatWorkspace({
         />
       );
     case "empty":
-      return (
-        <ChatWorkspaceFrame>
-          <EmptyState
-            icon={<ChatCircle />}
-            title="No workbench yet"
-            description="Create or join a workbench before chatting."
-          />
-        </ChatWorkspaceFrame>
+      return withListHeader(
+        headerSlot,
+        <EmptyState
+          icon={<ChatCircle />}
+          title="No workbench yet"
+          description="Create or join a workbench before chatting."
+        />,
       );
     case "unauthenticated":
-      return (
-        <ChatWorkspaceFrame>
-          <EmptyState
-            icon={<ChatCircle />}
-            title="Sign in to continue"
-            description="Your conversations live on a workbench — sign in to open them."
-          />
-        </ChatWorkspaceFrame>
+      return withListHeader(
+        headerSlot,
+        <EmptyState
+          icon={<ChatCircle />}
+          title="Sign in to continue"
+          description="Your conversations live on a workbench — sign in to open them."
+        />,
       );
     case "error":
-      return (
-        <ChatWorkspaceFrame>
-          <EmptyState
-            icon={<WarningCircle />}
-            title="Couldn't open this workbench"
-            description={tenant.message}
-          />
-        </ChatWorkspaceFrame>
+      return withListHeader(
+        headerSlot,
+        <EmptyState
+          icon={<WarningCircle />}
+          title="Couldn't open this workbench"
+          description={tenant.message}
+        />,
       );
     case "loading":
-      return (
-        <ChatWorkspaceFrame>
-          <WorkbenchLoadingState />
-        </ChatWorkspaceFrame>
-      );
+      return withListHeader(headerSlot, <WorkbenchLoadingState />);
   }
 }

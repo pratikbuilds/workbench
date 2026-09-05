@@ -2,9 +2,8 @@
 // for the suspended route (SSR would only see the Suspense fallback). The
 // one route with no stage bar of its own (`/`, see `AppRoute.hasStageTopBar`)
 // gets one from `AppShell` itself, so every route ends up titled the same
-// way - except the conversation route (`/w`), whose own conversation header
-// IS its page identity (CL-6089): it renders no generic `StageTopBar` at
-// all.
+// way — including `/w` and `/w/:id`, which title the conversation through
+// `StageTopBar` rather than a second in-stage header.
 
 import { ThemeProvider } from "@corbits/react-ui";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -348,8 +347,9 @@ describe("routes render", () => {
         return;
       }
       if (route.path === "/w") {
-        expect(stagePageTitle(markup)).toBeUndefined();
-        expect(markup).toContain('data-testid="shell-sidebar"');
+        expect(stagePageTitle(markup)).toBe("Workbenches");
+        expect(markup).toContain('data-testid="stage-top-bar"');
+        expect(activeFooterLabel(markup)).toBeUndefined();
         return;
       }
       if (route.path === "/settings") {
@@ -430,5 +430,7 @@ describe("routes render", () => {
   test("a /w/:workbenchId deep link waits for tenant resolution", async () => {
     const markup = await renderApp("/w/ch_deep");
     expect(markup).not.toContain('data-open="true"');
+    expect(markup).toContain('data-testid="stage-top-bar"');
+    expect(stagePageTitle(markup)).toBe("Workbenches");
   });
 });

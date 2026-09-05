@@ -348,7 +348,7 @@ export function PeopleTable({
           <TableHead>Kind</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Roles</TableHead>
-          <TableHead>Actions</TableHead>
+          <TableHead className="settings-actions-cell">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -402,7 +402,7 @@ export function PeopleTable({
                   ))
                 )}
               </TableCell>
-              <TableCell>
+              <TableCell className="settings-actions-cell">
                 <div className="settings-row-actions">
                   {person.status === "suspended" ? (
                     <Button

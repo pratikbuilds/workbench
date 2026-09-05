@@ -202,4 +202,78 @@ describe("Global model route", () => {
       container.remove();
     }
   });
+
+  test("choosing a default model PATCHes offerings only, never agent capabilities (CL-6782)", async () => {
+    const calls: { url: string; method: string }[] = [];
+    let patched = false;
+
+    globalThis.fetch = ((url: string, init?: RequestInit) => {
+      calls.push({
+        url,
+        method: init?.method ?? "GET",
+      });
+      if (url === "/api/tenants/ten_1/credentials") {
+        return Promise.resolve(
+          json({ data: [ANTHROPIC_CREDENTIAL], nextCursor: null }),
+        );
+      }
+      if (url === "/api/tenants/ten_1/providers") {
+        return Promise.resolve(
+          json({ data: [ANTHROPIC_PROVIDER], nextCursor: null }),
+        );
+      }
+      if (url === "/api/tenants/ten_1/connections/oauth-configured") {
+        return Promise.resolve(json({}));
+      }
+      if (url === "/api/tenants/ten_1/models") {
+        return Promise.resolve(
+          json(resolvedModels(patched ? 0 : 0, patched ? -1 : 1)),
+        );
+      }
+      if (url === "/api/tenants/ten_1/catalog/offerings") {
+        return Promise.resolve(json({ data: OWN_OFFERINGS, nextCursor: null }));
+      }
+      if (url === "/api/tenants/ten_1/catalog/offerings/offering_haiku") {
+        patched = true;
+        return Promise.resolve(json({ ...OWN_OFFERINGS[1], priority: -1 }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const { container, root } = renderSection();
+    try {
+      await settle();
+
+      expect(container.textContent).toContain(
+        "does not rewrite models already stored on existing agents",
+      );
+
+      const defaultModel = container.querySelector(
+        'select[aria-label="Default model"]',
+      ) as HTMLSelectElement | null;
+      act(() => {
+        if (defaultModel !== null) {
+          defaultModel.value = "claude-haiku-5";
+          defaultModel.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+      await settle();
+
+      const writes = calls.filter(
+        (call) => call.method !== "GET" && call.method !== "HEAD",
+      );
+      expect(writes.length).toBeGreaterThan(0);
+      expect(
+        writes.every((call) =>
+          call.url.startsWith("/api/tenants/ten_1/catalog/offerings/"),
+        ),
+      ).toBe(true);
+      expect(
+        calls.some((call) => call.url.includes("/agent-definitions")),
+      ).toBe(false);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
 });

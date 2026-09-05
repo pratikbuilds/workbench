@@ -156,6 +156,9 @@ function mockHub() {
       201,
     ),
   );
+  hub.get("/api/tenants/ten_1/catalog/offerings", (c) =>
+    c.json({ data: [], nextCursor: null }),
+  );
   return hub;
 }
 

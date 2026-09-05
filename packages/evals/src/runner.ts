@@ -20,7 +20,6 @@ function emptyWorldSnapshot(): WorldSnapshot {
   return {
     capturedAt: new Date().toISOString(),
     agentDefinitions: [],
-    routines: [],
     connections: [],
     webhookTriggers: [],
     fakeReceipts: [],

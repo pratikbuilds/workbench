@@ -68,6 +68,7 @@ export const CHAT_STRINGS = {
   emptyTimelineDescription: "Say something to get the conversation going.",
   emptyAgentTimelineDescription:
     "They're ready — send the first message to get started.",
+  jumpToLatestAction: "Jump to latest",
   mentionEmpty: "No matches",
   mentionAgentsGroupLabel: "Agents",
   mentionPeopleGroupLabel: "People",
@@ -112,6 +113,7 @@ export const CHAT_STRINGS = {
 
   inviteAgentAction: "Invite agent",
   workbenchMembersLabel: "Members",
+  workbenchPresenceLabel: "Live",
   teamStackOverflow: (count: number) =>
     `${count} more ${count === 1 ? "member" : "members"}`,
   threadsMenuCount: (count: number) =>
@@ -156,6 +158,7 @@ export const CHAT_STRINGS = {
   reactionPickerLabel: "Choose a reaction",
   reactionPickerOptionLabel: (emoji: string) => `React with ${emoji}`,
   reactionToggleError: "Couldn't update that reaction — try again.",
+  streamMessageDropped: "Couldn't apply that message live — refreshing.",
   pinMessageAction: "Pin message",
   unpinMessageAction: "Unpin message",
   pinMessageError: "Couldn't pin that message — try again.",
@@ -216,6 +219,9 @@ export const CHAT_STRINGS = {
   blockQuestionSubmit: "Send",
   blockQuestionSubmitting: "Sending…",
   blockQuestionAnswerError: "Couldn't send your answer — try again.",
+  blockQuestionNotifyFailed:
+    "Your answer was saved, but the agent couldn't be notified — try again.",
+  blockQuestionRetry: "Try again",
   blockQuestionAnsweredLabel: "Your answer",
   blockConnectGithubPickHeadline: "Choose what gets reviewed",
   blockConnectGithubStepDone: "Done",
@@ -321,6 +327,8 @@ export const CHAT_STRINGS = {
   turnFailedTitle: (sender: string) => `${sender} didn't reply`,
   turnFailedModelUnavailable: (sender: string) =>
     `${sender}'s model isn't available here.`,
+  turnFailedToolsUnsupported: (sender: string) =>
+    `${sender}'s model can't use tools.`,
   turnFailedPickModel: "Pick a model",
   turnFailedMoreInSettings: "More in Settings",
   turnCancelledTitle: (sender: string) => `You stopped ${sender}'s turn`,
@@ -432,6 +440,9 @@ export const CHAT_STRINGS = {
   ) => `${canonicalName} · ${providerName}`,
   workbenchSettingsAgentDetailNoConnectedModels:
     "No connected providers yet — connect one in Shared Settings.",
+  workbenchSettingsAgentDetailCatalogError: "Couldn't load the models.",
+  workbenchSettingsAgentDetailCatalogRetryAction: "Retry",
+  workbenchSettingsAgentDetailCatalogSettingsAction: "Shared Settings",
   workbenchSettingsAgentDetailHistoryTitle: "History",
   workbenchSettingsAgentDetailHistoryHint:
     "Every change to this agent's instructions and capabilities, oldest actions first.",

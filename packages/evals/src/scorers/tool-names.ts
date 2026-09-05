@@ -14,11 +14,7 @@ export const REQUEST_CONNECTION_TOOL = "request_connection";
 
 /** The tools a "build" step uses to stand up real, lasting workbench
  * state — the ones an interview must precede. */
-export const BUILD_TOOLS = [
-  CREATE_AGENT_TOOL,
-  ROUTINE_CREATE_TOOL,
-  ROUTINE_RUN_NOW_TOOL,
-] as const;
+export const BUILD_TOOLS = [CREATE_AGENT_TOOL] as const;
 
 // The shipped GitHub write path (CL-6340 Code Review MVP, PR #62):
 // one diff read and one aggregated comment-only review per PR, posted

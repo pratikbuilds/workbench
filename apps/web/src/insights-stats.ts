@@ -3,9 +3,13 @@
 // existing endpoints.
 
 import { isWorkbenchHostDefinitionName } from "@corbits/chat/workbench-host-naming";
+import {
+  runOutcomeStatus,
+  withListingAbandoned,
+} from "@corbits/workflows/client";
 
 import type { InsightsRun, RunTraceSpan } from "./insights-api";
-import type { Routine } from "./routines-api";
+import type { ScheduledWorkflowDefinition } from "./routines-api";
 
 export type TraceStats = {
   readonly steps: number;
@@ -156,8 +160,9 @@ export function filterRunsByCreatedAt(
 
 export function computeInsightsStats(
   runs: readonly InsightsRun[],
-  routines: readonly Routine[],
+  routines: readonly ScheduledWorkflowDefinition[],
   recentLimit: number = INSIGHTS_RECENT_LIMIT,
+  now: number = Date.now(),
 ): InsightsStats {
   const purposeful = purposeRunsForInsights(runs);
   let running = 0;
@@ -165,7 +170,9 @@ export function computeInsightsStats(
   let stopped = 0;
   let deployed = 0;
   for (const run of purposeful) {
-    switch (run.status) {
+    const outcome =
+      runOutcomeStatus(withListingAbandoned(run, now), now) ?? run.status;
+    switch (outcome) {
       case "running":
       case "updating":
         running += 1;
@@ -174,6 +181,7 @@ export function computeInsightsStats(
         errored += 1;
         break;
       case "stopped":
+      case "completed":
         stopped += 1;
         break;
       case "deployed":
@@ -193,7 +201,7 @@ export function computeInsightsStats(
     stopped,
     deployed,
     routineCount: routines.length,
-    enabledRoutines: routines.filter((r) => r.enabled).length,
+    enabledRoutines: routines.filter((r) => r.status === "deployed").length,
     recentRuns,
   };
 }

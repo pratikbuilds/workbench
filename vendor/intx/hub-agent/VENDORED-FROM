@@ -1,4 +1,4 @@
 Source: https://github.com/faremeter/interchange (packages/hub-agent)
 Commit: a8bc06ae38661c5e0ed91ded8559bf09f502213d (origin/main, 2026-08-27)
 License: LGPL-2.1-only (see vendor/intx/LICENSE)
-Local modifications: exports map repointed from the upstream intx-src condition to direct TypeScript source resolution (types/default -> ./src/...); dist references removed. No source delta.
+Local modifications: exports map repointed from the upstream intx-src condition to direct TypeScript source resolution (types/default -> ./src/...); dist references removed. CL-6396: SessionEventSink and createSidecarOrchestrator's dispatchEvent/publishWorkflowInferenceEvent take an optional childRunId, and createHubLink's sendEvent stamps it on agent.event so overlapping turns close the right occurrence row.

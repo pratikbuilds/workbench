@@ -29,7 +29,10 @@ primitives, `@intx/authz` for grant checks, `@intx/crypto` for signing,
   folded, single-agent run whose mailbox is the workbench's shared timeline.
 - **`src/platform-adapter.ts`** / **`src/platform-port.ts`** — the
   `ChatPlatform` port this package needs from its host, and the hub-side
-  implementation composed from `@corbits/folded-runs`.
+  implementation composed from `@corbits/folded-runs`. The adapter does
+  not mint its own signing-key cache: the host injects one
+  `CryptoProviderCache` so chat sendMail shares keys with every other
+  folded-mail sender in the process.
 - **`src/chat-orchestrator.ts`** — turns invited-agent replies and
   approval-gate events into workbench messages and in-chat approve blocks.
 - **`src/workbench-service.ts`** — workbench-level orchestration above the

@@ -32,6 +32,7 @@ import { createInMemoryTransport } from "@intx/mail-memory";
 import { createTarballCache } from "@intx/tool-packaging";
 import { hexEncode } from "@intx/types";
 
+import { reportError } from "@corbits/error-sink";
 import { readSidecarConfig } from "./config";
 import {
   DEFAULT_TOOL_REGISTRIES_JSON,
@@ -42,7 +43,7 @@ import { createWorkflowClosureMaterializer } from "./workflow-closure-materializ
 import { MAX_INLINE_ASSET_PAYLOAD_BYTES } from "./source-asset-delivery";
 import { createDefaultHarnessBuilder } from "./default-harness";
 import { createHubLinkWatchdog } from "./hub-link-watchdog";
-import { drainWithTimeout } from "./shutdown";
+import { attachShutdownRejectionHandler, runSidecarShutdown } from "./shutdown";
 import { loadOrMintSidecarKeypair } from "./signing-keypair";
 import {
   createSidecarDeployRouter,
@@ -299,8 +300,9 @@ const orchestrator = createSidecarOrchestrator({
         deploymentAddressRegistry.record(deploymentId, agentAddress);
         bootRestorePushHold.onDeploymentRegistered(agentAddress);
       },
-      unregisterDeployment: ({ deploymentId }) => {
+      unregisterDeployment: ({ deploymentId, agentAddress }) => {
         deploymentAddressRegistry.unregister(deploymentId);
+        wrappedRepoStore.reclaimPushState({ deploymentId, agentAddress });
       },
       // Lazy-bound the same way as `workflowRunPackClient.hubLink` above:
       // `createDeployRouter` runs synchronously during `createSidecarOrchestrator`
@@ -387,25 +389,28 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   const log = getLogger(["sidecar", "shutdown"]);
-  log.info`Received ${signal}; draining before exit`;
-  orchestrator.close();
-  const outcome = await drainWithTimeout(
-    () => deployRouter.shutdownAll(),
-    SHUTDOWN_DRAIN_MS,
-  );
-  // Drained and timed-out both exit 0: the process is going down either
-  // way and a bound cutting a slow drain short is not a crash. A drain
-  // that threw is a genuine fault and exits non-zero.
-  if (outcome.kind === "failed") {
-    const message =
-      outcome.error instanceof Error
-        ? outcome.error.message
-        : String(outcome.error);
-    log.error`Drain threw during shutdown; exiting non-zero: ${message}`;
-    process.exit(1);
-  }
-  process.exit(0);
+  await runSidecarShutdown({
+    signal,
+    close: () => {
+      orchestrator.close();
+    },
+    drain: () => deployRouter.shutdownAll(),
+    drainTimeoutMs: SHUTDOWN_DRAIN_MS,
+    exit: (code) => {
+      process.exit(code);
+    },
+    log,
+  });
 }
 
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
+function onShutdownRejection(error: unknown): void {
+  reportError(error, { operation: "sidecar.shutdown.signal" });
+  process.exit(1);
+}
+
+process.on("SIGTERM", () => {
+  attachShutdownRejectionHandler(shutdown("SIGTERM"), onShutdownRejection);
+});
+process.on("SIGINT", () => {
+  attachShutdownRejectionHandler(shutdown("SIGINT"), onShutdownRejection);
+});

@@ -23,6 +23,7 @@ import {
   summarizeLatency,
   summarizeUsage,
   summarizeUsageByTenant,
+  teamSpaceWorkbenchRows,
   type RunTraceReader,
   type ToolCallReader,
 } from "./queries";
@@ -210,12 +211,11 @@ export function createInsightsRoutes(
    * seeing the scope's sum. Calling it for a leaf workbench (no
    * descendants) returns that one workbench's own row.
    *
-   * A `parentId === null` requested tenant is never itself a workbench —
-   * it is the account root, the container real workbenches (each its own
-   * child tenant, CL-6089) live under. Its own row would just be a
-   * zero-usage rollup-of-itself duplicate of the "All workbenches"
-   * landing this chart already sits on, so it is dropped rather than
-   * listed alongside its children (CL-6368).
+   * A `parentId === null` requested tenant is the account root, the
+   * container real workbenches live under (CL-6089). An empty parent row
+   * is a duplicate of the "All workbenches" landing and is dropped
+   * (CL-6368). A parent that recorded turns of its own stays in the
+   * breakdown so those turns are not silently excluded (CL-6659).
    */
   app.get(
     "/workbenches",
@@ -229,9 +229,10 @@ export function createInsightsRoutes(
         summarizeUsageByTenant(deps.store, scope, range),
         tenantNames(deps.db, tenant.id, tenant.name, scope),
       ]);
-      const isTeamSpace = tenant.parentId === null;
-      const items = rows
-        .filter((row) => !isTeamSpace || row.tenantId !== tenant.id)
+      const items = teamSpaceWorkbenchRows(rows, {
+        tenantId: tenant.id,
+        isTeamSpace: tenant.parentId === null,
+      })
         .map((row) => ({
           tenantId: row.tenantId,
           name: names.get(row.tenantId) ?? row.tenantId,

@@ -10,13 +10,12 @@
 // column gets refreshed in place instead — the reconnect nudge is now a
 // last resort, sent only when that refresh itself fails.
 //
-// This mirrors `routine-scheduler.ts`'s own shape: the decision of
+// This mirrors the hub's native schedule poller shape: the decision of
 // *which* Hugging-Face-style credentials are due lives in
 // `@corbits/notify` (`findDueCredentialExpiries`), pure and unit-tested
-// there; `CredentialExpirySweepStore` is the same store-behind-an-
-// interface seam `@corbits/routines`' `RoutineStore` uses, so this loop's
-// own claim/refresh/mail orchestration is testable against an in-memory
-// store without a live Postgres.
+// there; `CredentialExpirySweepStore` is a store-behind-an-interface
+// seam, so this loop's own claim/refresh/mail orchestration is testable
+// against an in-memory store without a live Postgres.
 //
 // Interchange's inference reactor already fails a credential-category
 // error over to the next configured source with no changes here — for

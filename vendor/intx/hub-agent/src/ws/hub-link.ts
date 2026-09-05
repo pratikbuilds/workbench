@@ -59,6 +59,7 @@ export type SessionEventSink = (
   agentAddress: string,
   sessionId: string,
   event: InferenceEvent,
+  childRunId?: string,
 ) => void;
 
 const logger = getLogger(["interchange", "hub-agent", "ws"]);
@@ -1757,12 +1758,18 @@ export function createHubLink(config: HubLinkConfig): HubLink {
     }
   }
 
-  const sendEvent: SessionEventSink = (agentAddress, sessionId, event) => {
+  const sendEvent: SessionEventSink = (
+    agentAddress,
+    sessionId,
+    event,
+    childRunId,
+  ) => {
     send({
       type: "agent.event",
       agentAddress,
       sessionId,
       event,
+      ...(childRunId !== undefined ? { childRunId } : {}),
     });
   };
 

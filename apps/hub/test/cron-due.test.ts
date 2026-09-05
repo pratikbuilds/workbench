@@ -1,11 +1,11 @@
 // Pure-function proof for the scheduler's "is it time yet" decision — no
-// clock, database, or launch involved. `cronExpressionForTrigger`
-// (@corbits/routines) is the only producer of these expressions in this
+// clock, database, or launch involved. `isValidCronExpression`
+// (@corbits/workflows) is the only producer of these expressions in this
 // repo today; these cases cover its four preset renderings plus the
 // raw-cron escape hatch's comma/range/step grammar.
 
 import { describe, expect, test } from "bun:test";
-import { isValidCronExpression } from "@corbits/routines";
+import { isValidCronExpression } from "@corbits/workflows";
 import { cronMatchesMinute, minuteKey } from "../src/cron-due.ts";
 
 describe("cronMatchesMinute", () => {

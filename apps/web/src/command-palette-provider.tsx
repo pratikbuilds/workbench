@@ -11,6 +11,7 @@ import {
   filterBenchMemberships,
   listWorkbenchTenantIds,
 } from "@corbits/bench-ui";
+import { reportError } from "@corbits/error-sink";
 import { useQuery } from "@tanstack/react-query";
 import {
   buildCommandPaletteGroups,
@@ -51,17 +52,18 @@ import { recentsStoreForBench } from "./command-palette-recents";
 import { NAV_ROUTES } from "./routes";
 import { ArtifactListPageSchema, useAPIQuery } from "./api";
 import { useBench } from "./bench-context";
-import {
-  useCloseCanvas,
-  useOpenRoutineInCanvas,
-} from "./shell/canvas-availability";
+import { useCloseCanvas } from "./shell/canvas-availability";
 import { listMcpServers } from "@corbits/plugins-ui";
 import {
   AGENTS_PATH_PREFIX,
   PLUGINS_PATH_PREFIX,
   SKILLS_PATH_PREFIX,
 } from "./path-ids";
-import { listRoutines, runRoutineNow, useTenantQuery } from "./routines-api";
+import {
+  listScheduledWorkflows,
+  runScheduledWorkflowNow,
+  useTenantQuery,
+} from "./routines-api";
 import { listSkills } from "./skills-api";
 import { meKeys, tenantKeys } from "./query-client";
 import type { Navigate } from "./navigation";
@@ -106,7 +108,6 @@ export function CommandPaletteProvider({
   const [recents, setRecents] = useState<readonly RecentEntry[]>([]);
   const { cycleMode } = useTheme();
   const closeCanvas = useCloseCanvas();
-  const openRoutine = useOpenRoutineInCanvas();
 
   const recentsStore = useMemo(
     () =>
@@ -267,7 +268,7 @@ export function CommandPaletteProvider({
   const routinesQuery = useTenantQuery(
     tenantKeys.routines(selectedTenantId ?? ""),
     open && selectedTenantId !== null,
-    () => listRoutines(selectedTenantId ?? ""),
+    () => listScheduledWorkflows(selectedTenantId ?? ""),
   );
   const skillsQuery = useTenantQuery(
     tenantKeys.skills(selectedTenantId ?? ""),
@@ -361,7 +362,7 @@ export function CommandPaletteProvider({
     const runNow =
       routinesQuery.kind === "ready"
         ? routinesQuery.data.map((routine) => ({
-            id: `action:run-routine:${routine.id}`,
+            id: `action:run-routine:${routine.definitionId}`,
             title: `Run · ${routine.name}`,
             subtitle: "Run this routine now",
           }))
@@ -404,12 +405,9 @@ export function CommandPaletteProvider({
     () =>
       routinesQuery.kind === "ready"
         ? routinesQuery.data.map((routine) => ({
-            id: `entity:routines:${routine.id}`,
+            id: `entity:routines:${routine.definitionId}`,
             title: routine.name,
-            subtitle:
-              routine.scope === "personal"
-                ? "Personal routine"
-                : "Workbench routine",
+            subtitle: "Scheduled workflow",
           }))
         : [],
     [routinesQuery],
@@ -523,7 +521,16 @@ export function CommandPaletteProvider({
       } else if (id.startsWith("action:run-routine:")) {
         const routineId = id.slice("action:run-routine:".length);
         if (selectedTenantId !== null) {
-          void runRoutineNow(selectedTenantId, routineId);
+          void (async () => {
+            try {
+              await runScheduledWorkflowNow(selectedTenantId, routineId);
+            } catch (cause) {
+              reportError(cause, {
+                operation: "scheduled_workflow_run_now",
+                tenantId: selectedTenantId,
+              });
+            }
+          })();
         }
         navigate(`/routines/${encodeURIComponent(routineId)}`);
       } else if (id.startsWith("action:")) {
@@ -533,7 +540,6 @@ export function CommandPaletteProvider({
           tenantId: selectedTenantId,
           cycleTheme: cycleMode,
           closeCanvas,
-          openRoutine,
         });
       } else if (id.startsWith("route:")) {
         const routePath = id.slice("route:".length);
@@ -596,7 +602,6 @@ export function CommandPaletteProvider({
       selectedTenantId,
       cycleMode,
       closeCanvas,
-      openRoutine,
       pushRecent,
       workbenchItems,
       agentItems,

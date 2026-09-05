@@ -2,8 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import type { ToolCall } from "@intx/types/runtime";
 
 import {
-  LOAD_SKILL_TOOL,
   SKILLS_LIST_TOOL,
+  SKILLS_LOAD_TOOL,
   SKILLS_SEARCH_TOOL,
   skillsTools,
 } from "./tool";
@@ -31,12 +31,12 @@ function stubFetch(respond: () => Response | Promise<Response>): void {
   globalThis.fetch = (async () => respond()) as unknown as typeof fetch;
 }
 
-test("declares skills_list, skills_search, and load_skill", () => {
+test("declares skills_list, skills_search, and skills_load", () => {
   const bundle = skillsTools(testEnv());
   expect(bundle.definitions.map((d) => d.name)).toEqual([
     SKILLS_LIST_TOOL,
     SKILLS_SEARCH_TOOL,
-    LOAD_SKILL_TOOL,
+    SKILLS_LOAD_TOOL,
   ]);
 });
 
@@ -100,7 +100,7 @@ test("skills_search requires a query", async () => {
   expect(String(result.content)).toContain("requires a query");
 });
 
-test("load_skill returns the skill body", async () => {
+test("skills_load returns the skill body", async () => {
   stubFetch(
     () =>
       new Response(
@@ -114,30 +114,39 @@ test("load_skill returns the skill body", async () => {
       ),
   );
   const result = await skillsTools(testEnv()).run(
-    callFor(LOAD_SKILL_TOOL, { name: "triage" }),
+    callFor(SKILLS_LOAD_TOOL, { name: "triage" }),
     new AbortController().signal,
   );
   expect(result.isError).toBeFalsy();
   expect(String(result.content)).toContain("Pick one label.");
 });
 
-test("load_skill surfaces a missing skill as an error rather than inventing one", async () => {
+test("skills_load surfaces a missing skill as an error rather than inventing one", async () => {
   stubFetch(() => new Response("nope", { status: 404 }));
   const result = await skillsTools(testEnv()).run(
-    callFor(LOAD_SKILL_TOOL, { name: "triage" }),
+    callFor(SKILLS_LOAD_TOOL, { name: "triage" }),
     new AbortController().signal,
   );
   expect(result.isError).toBe(true);
   expect(String(result.content)).toContain("404");
 });
 
-test("load_skill requires a name", async () => {
+test("skills_load requires a name", async () => {
   const result = await skillsTools(testEnv()).run(
-    callFor(LOAD_SKILL_TOOL),
+    callFor(SKILLS_LOAD_TOOL),
     new AbortController().signal,
   );
   expect(result.isError).toBe(true);
   expect(String(result.content)).toContain("requires a skill name");
+});
+
+test("load_skill is no longer a recognized tool name", async () => {
+  const result = await skillsTools(testEnv()).run(
+    callFor("load_skill", { name: "triage" }),
+    new AbortController().signal,
+  );
+  expect(result.isError).toBe(true);
+  expect(String(result.content)).toContain("unknown tool");
 });
 
 test("an unknown tool name is an error result, not a throw", async () => {

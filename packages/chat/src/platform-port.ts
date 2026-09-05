@@ -174,13 +174,6 @@ export interface WorkbenchMail {
      * a principal address has no mailbox: a reply to it vanishes.
      */
     readonly fromWorkbenchId?: string;
-    /**
-     * The MIME `Interchange-Correlation-ID` header to stamp on this mail
-     * (`vendor/intx/mime/src/mail-builder.ts` already accepts this as
-     * `opts.correlationId`) — set when this message is an answer that must
-     * resolve a specific parked `message_response` gate, absent otherwise.
-     */
-    readonly correlationId?: string;
   }): Promise<SentMail>;
 
   fetchBlob(workbenchId: string, blobId: string): Promise<string | Uint8Array>;

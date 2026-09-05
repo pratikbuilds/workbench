@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src", "package.json", "src/**/*.json"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "compilerOptions": {
+    "types": ["bun"],
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
+  },
+  "references": [
+    {
+      "path": "../../vendor/intx/hub-sessions/tsconfig.src.json"
+    },
+    {
+      "path": "../error-sink/tsconfig.src.json"
+    },
+    {
+      "path": "../sandbox-sidecar/tsconfig.src.json"
+    }
+  ]
+}

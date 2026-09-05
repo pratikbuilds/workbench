@@ -34,6 +34,7 @@ import {
   createInMemoryRoomMessageStore,
   postRoomMessage,
 } from "../src/room-messages";
+import { createInMemoryTurnMailCorrelationStore } from "../src/turn-mail-correlation";
 import { createWorkbenchSubscriberRegistry } from "../src/workbench-events";
 import type { ChatWorkbenchEvent } from "../src/platform-port";
 
@@ -189,6 +190,59 @@ describe("message fan-out", () => {
     expect(timelineTexts(await timelineOf(deps, workbench.id))).toEqual([
       "hi @ins_echo1",
     ]);
+  });
+
+  test("a turn dispatch records which message its mail answers (CL-6314)", async () => {
+    const turnMail = createInMemoryTurnMailCorrelationStore();
+    const deps = buildDeps({ turnMailCorrelation: turnMail });
+    const platform = deps.platform as ReturnType<typeof fakePlatform>;
+    const dispatchMailIds: string[] = [];
+    const deliverMail = platform.sendMail.bind(platform);
+    platform.sendMail = async (input) => {
+      const sent = await deliverMail(input);
+      dispatchMailIds.push(sent.id);
+      return sent;
+    };
+    const app = mountAs(createChatRoutes(deps), "prn_alice");
+    const { body: workbench } = await createWorkbench(app, {
+      kind: "workbench",
+      name: "demo",
+      participants: ["ins_echo1@acme.example"],
+    });
+
+    const response = await app.request(
+      `/workbenches/${workbench.id}/messages`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          parts: [{ kind: "text", text: "hi @ins_echo1" }],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const sentBody = (await response.json()) as { id: string };
+    await settleFanout();
+
+    // The one mail the send made is the turn dispatch; its id is
+    // recorded against the posted message — the correlation the reply
+    // path reads back when the agent answers.
+    expect(platform.sentMail).toHaveLength(1);
+    const dispatchMailId = dispatchMailIds[0];
+    if (dispatchMailId === undefined) {
+      throw new Error("expected the dispatch to send one mail");
+    }
+    expect(
+      await turnMail.findTurnMailSource({
+        tenantId: TENANT.id,
+        mailId: dispatchMailId,
+      }),
+    ).toEqual({
+      tenantId: TENANT.id,
+      workbenchId: workbench.id,
+      sourceMessageId: sentBody.id,
+    });
   });
 
   test("a posted message returns before the agents it names are asked for a turn", async () => {

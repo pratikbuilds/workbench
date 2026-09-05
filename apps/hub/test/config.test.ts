@@ -36,7 +36,8 @@ describe("readHubConfig", () => {
       signInRateLimit: { windowSeconds: 60, max: 10 },
       allowPlaintextSecrets: false,
       allowUnverifiedEmails: false,
-      sidecarProvisioners: [],
+      sidecarProvisioners: [{ id: "process" }],
+      defaultSidecarProvisionerId: "process",
       envProviderKeys: {},
       envProviderBaseUrls: {},
       envCredentialPlantAdmin: {
@@ -442,10 +443,45 @@ describe("readHubConfig", () => {
   });
 
   describe("sidecarProvisioners", () => {
-    test("defaults to empty with no default id, matching the current static-sidecar behavior", () => {
+    test("an unconfigured install registers the process backend as its sole default", () => {
       const config = readHubConfig(validEnv);
-      expect(config.sidecarProvisioners).toEqual([]);
-      expect(config.defaultSidecarProvisionerId).toBeUndefined();
+      expect(config.sidecarProvisioners).toEqual([{ id: "process" }]);
+      expect(config.defaultSidecarProvisionerId).toBe("process");
+    });
+
+    test("the process backend's optional overrides reach its config", () => {
+      const config = readHubConfig({
+        ...validEnv,
+        PROCESS_PROVISIONER_SIDECAR_ENTRY: "/opt/sidecar/index.js",
+        PROCESS_PROVISIONER_RUNTIME: "/usr/bin/node",
+      });
+      expect(config.sidecarProvisioners).toEqual([
+        {
+          id: "process",
+          sidecarEntryPath: "/opt/sidecar/index.js",
+          runtimePath: "/usr/bin/node",
+        },
+      ]);
+    });
+
+    test("process is a listable id like any other backend", () => {
+      const config = readHubConfig({
+        ...validEnv,
+        SIDECAR_PROVISIONERS: "process",
+      });
+      expect(config.sidecarProvisioners).toEqual([{ id: "process" }]);
+      expect(config.defaultSidecarProvisionerId).toBe("process");
+    });
+
+    test("an explicit list without process does not get the default backend", () => {
+      const config = readHubConfig({
+        ...validEnv,
+        SIDECAR_PROVISIONERS: "docker",
+        DOCKER_PROVISIONER_IMAGE: "ghcr.io/corbits/sidecar:latest",
+      });
+      expect(config.sidecarProvisioners.map((one) => one.id)).toEqual([
+        "docker",
+      ]);
     });
 
     test("SIDECAR_PROVISIONERS=docker with an image is wired and becomes the default", () => {

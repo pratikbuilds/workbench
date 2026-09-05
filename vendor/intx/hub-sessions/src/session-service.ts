@@ -334,11 +334,6 @@ export type UserMessageParams = {
   sessionId: string;
   tenantId: string;
   cryptoProvider: CryptoProvider;
-  /** Stamped as the MIME `Interchange-Correlation-ID` header (CL-7191) so
-   * the reactor's `tryCorrelate` can resolve a parked `message_response`
-   * gate against this message rather than only ordering. Absent for every
-   * ordinary message. */
-  correlationId?: string;
 };
 
 export type SessionServiceDeps = {
@@ -2286,7 +2281,6 @@ export function createSessionService(
       sessionId,
       tenantId,
       cryptoProvider,
-      correlationId,
     } = params;
 
     const headers: MessageHeaders = {
@@ -2300,7 +2294,7 @@ export function createSessionService(
       references,
       mimeVersion: "1.0",
       interchangeType: "conversation.message",
-      interchangeCorrelationId: correlationId,
+      interchangeCorrelationId: undefined,
       interchangeTenantId: tenantId,
       interchangeAgentId: undefined,
       interchangeSessionId: sessionId,

@@ -103,6 +103,7 @@ import {
   type ControlChannelSender,
   type ControlPayload,
   type EventPayload,
+  type ReceivedEvent,
 } from "../ipc/index";
 
 import {
@@ -194,7 +195,7 @@ export interface RecycleContext {
    */
   readonly warmKeep: boolean;
   /** Forward target for InferenceEvents the new child publishes. */
-  readonly onInferenceEvent: (event: EventPayload) => void;
+  readonly onInferenceEvent: (event: EventPayload, childRunId?: string) => void;
   /** Live child wiring on entry; replaced before return. */
   readonly current: ChildWiring;
   /** Supervisor-side drain primitive; sends the existing drain mail. */
@@ -583,11 +584,11 @@ async function waitForReady(
 }
 
 async function pumpEvents(
-  iter: AsyncGenerator<EventPayload, void, void>,
-  onInferenceEvent: (event: EventPayload) => void,
+  iter: AsyncGenerator<ReceivedEvent, void, void>,
+  onInferenceEvent: (event: EventPayload, childRunId?: string) => void,
 ): Promise<void> {
-  for await (const event of iter) {
-    onInferenceEvent(event);
+  for await (const received of iter) {
+    onInferenceEvent(received.event, received.childRunId);
   }
 }
 

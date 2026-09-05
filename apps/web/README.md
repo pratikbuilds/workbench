@@ -47,9 +47,7 @@ reads `NAV_ROUTES` at all: it has nothing to do with which pages exist.
 
 Running routines in the contextual column are sourced today from
 `@corbits/chat-ui`'s workflow-run listing (`src/shell/routine-activity.ts`)
-rather than a dedicated routines package, which isn't published yet — the
-column depends only on that file's `RoutineActivityItem` shape, so swapping
-in a real `@corbits/routines` listing later touches nothing else.
+— the column depends only on that file's `RoutineActivityItem` shape.
 
 ## Screens
 

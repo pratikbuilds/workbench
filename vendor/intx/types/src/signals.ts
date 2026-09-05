@@ -8,7 +8,7 @@ import type { GateType } from "./runtime";
  * iterable and can be composed into wire validators) and a derived
  * TypeScript union.
  */
-export const signalKinds = ["approval", "message_response"] as const;
+export const signalKinds = ["approval"] as const;
 export const SignalKind = type.enumerated(...signalKinds);
 export type SignalKind = typeof SignalKind.infer;
 
@@ -53,8 +53,6 @@ export function signalKindToGateType(kind: SignalKind): GateType {
   switch (kind) {
     case "approval":
       return "approval";
-    case "message_response":
-      return "message_response";
     default:
       return assertNever(kind);
   }

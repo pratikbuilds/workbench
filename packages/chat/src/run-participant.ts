@@ -1,11 +1,12 @@
 // Adds an already-launched run's address to a workbench's participant list.
 // Membership is the one thing the chat orchestrator keys on to post a
 // run's `connector.reply` into a workbench (see `chat-orchestrator.ts`'s
-// `resolveMemberWorkbenches`), so a routine's run delivering into its
+// `resolveMemberWorkbenches`), so a scheduled fire delivering into its
 // workbench is exactly this join — no second posting path. Unlike
-// `launchAndJoinAgent`, the run is launched elsewhere (`@corbits/routines`'
-// launcher port) and no join event is posted: a routine's arrival in the
-// workbench is its first reply, not a "joined" announcement.
+// `launchAndJoinAgent`, the run is launched elsewhere (the hub's native
+// schedule poller or webhook ingress) and no join event is posted: a
+// scheduled run's arrival in the workbench is its first reply, not a
+// "joined" announcement.
 import { addParticipant } from "./participants";
 import type { ChatStore } from "./store";
 

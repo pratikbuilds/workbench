@@ -41,7 +41,7 @@ const ALLOWLIST: readonly {
 }[] = [
   {
     relPath: "packages/chat/src/schema.ts",
-    maxOccurrences: 16,
+    maxOccurrences: 17,
     tables: [
       // Created as channel_settings et al.; renamed to workbench_* by
       // 0018_rename_channel_to_workbench (CL-6260) — see migrations.ts.
@@ -70,12 +70,11 @@ const ALLOWLIST: readonly {
       // answers "which run produced this reply, and how did that turn
       // end" from its own rows — see agentTurns in schema.ts.
       "agent_turns",
+      // Which workbench message a dispatch mail answers (CL-6314): the
+      // reply path threads under that source. Chat-owned correlation,
+      // not tenancy — see turnMailCorrelation in schema.ts.
+      "turn_mail_correlation",
     ],
-  },
-  {
-    relPath: "packages/routines/src/schema.ts",
-    maxOccurrences: 2,
-    tables: ["routine", "routine_run"],
   },
   {
     relPath: "packages/webhook-triggers/src/schema.ts",

@@ -104,6 +104,21 @@ describe("generate-tsconfig-references", () => {
     expect(config.compilerOptions?.["composite"]).toBe(false);
   });
 
+  test("gives the combined tsconfig.json its own tsBuildInfoFile", async () => {
+    // The combined project extends tsconfig.src.json, which sets
+    // tsBuildInfoFile: "dist/tsconfig.tsbuildinfo" for the composite build.
+    // Left inherited, the combined project's --noEmit check and the
+    // composite build both write that same file, and each run invalidates
+    // the other's incremental state.
+    await writePackage("leaf");
+    await run([]);
+
+    const combined = await readTsconfig("leaf");
+    expect(combined.compilerOptions?.["tsBuildInfoFile"]).toBe(
+      "tsconfig.tsbuildinfo",
+    );
+  });
+
   test("references a real workspace dependency's tsconfig.src.json", async () => {
     await writePackage("leaf");
     await writePackage("consumer", { "@fixture/leaf": "workspace:*" });

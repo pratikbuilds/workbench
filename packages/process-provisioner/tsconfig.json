@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.src.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "disableSourceOfProjectReferenceRedirect": true,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo",
+    "rootDir": "../.."
+  },
+  "include": ["src"],
+  "exclude": [],
+  "references": [
+    {
+      "path": "../../vendor/intx/hub-sessions/tsconfig.src.json"
+    },
+    {
+      "path": "../error-sink/tsconfig.src.json"
+    },
+    {
+      "path": "../sandbox-sidecar/tsconfig.src.json"
+    }
+  ]
+}

@@ -16,7 +16,7 @@
 // signer signs and the verifier verifies.
 //
 // Canonical JSON: keys appear in fixed insertion order (seq,
-// channelId, payload). The payload's internal structure is preserved
+// channelId, payload, then childRunId when the event channel set it). The payload's internal structure is preserved
 // as the sender produced it; no recursive canonicalization is
 // performed because the verifier never compares two structurally
 // different serializations of the same logical value. Senders and
@@ -35,6 +35,7 @@ export const FrameEnvelope = type({
   seq: "number",
   channelId: "string",
   payload: "unknown",
+  "childRunId?": "string",
 });
 
 export type FrameEnvelope = typeof FrameEnvelope.infer;
@@ -69,11 +70,19 @@ export type MacedEnvelope = typeof MacedEnvelope.infer;
  * fixed-shape object.
  */
 export function encodeEnvelope(envelope: FrameEnvelope): Uint8Array {
-  const ordered = {
+  const ordered: {
+    seq: number;
+    channelId: string;
+    payload: unknown;
+    childRunId?: string;
+  } = {
     seq: envelope.seq,
     channelId: envelope.channelId,
     payload: envelope.payload,
   };
+  if (envelope.childRunId !== undefined) {
+    ordered.childRunId = envelope.childRunId;
+  }
   return new TextEncoder().encode(JSON.stringify(ordered));
 }
 

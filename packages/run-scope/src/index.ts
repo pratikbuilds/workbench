@@ -6,3 +6,5 @@ export {
   type ResolveRoutineFires,
   type RoutineFireInfo,
 } from "./scope-routes";
+export { listingTurnsByRunId } from "./in-flight-turns";
+export type { InFlightListingTurn } from "./in-flight-turns";

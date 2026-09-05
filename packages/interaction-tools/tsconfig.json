@@ -7,6 +7,7 @@
     "declaration": false,
     "declarationMap": false,
     "emitDeclarationOnly": false,
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo",
     "rootDir": "../.."
   },
   "include": ["src"],
@@ -17,6 +18,9 @@
     },
     {
       "path": "../../vendor/intx/types/tsconfig.src.json"
+    },
+    {
+      "path": "../error-sink/tsconfig.src.json"
     }
   ]
 }

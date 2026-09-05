@@ -30,6 +30,13 @@ export interface ConnectServiceActions {
     connectorId: string,
     listener: (query: ConnectServiceQuery) => void,
   ): () => void;
+  /**
+   * Re-reads live connect state for every subscribed connector and fans
+   * it to those listeners. ChatWorkspace calls this when a parsed
+   * `chat.settings` event lands so a mounted card flips without
+   * remounting (CL-6476).
+   */
+  notifySettingsChanged(): Promise<void>;
   /** One-click connect: starts the hosted OAuth hand-off (navigating
    * away and back) or completes a keyless preset in place. */
   connect(connectorId: string): Promise<ConnectServiceResult>;

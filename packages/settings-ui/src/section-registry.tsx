@@ -121,22 +121,33 @@ const SETTINGS_SECTION_GROUPS: readonly SettingsSectionGroupDef[] = [
 /**
  * The Personal Settings / Shared Settings groups, with a section dropped entirely — never
  * rendered disabled — until its `access[gate]` probe resolves `allowed`.
- * Both the settings stage and a host's own section nav (e.g. col2) should
- * read from this single registry so they can never drift.
+ * Loading and authenticated deny both withhold the section. A probe `error`
+ * withholds too (so gated sections never flash then hide) but marks the
+ * group `accessProbeFailed` so a host can show a couldn't-check state
+ * instead of looking like unauthorized. Both the settings stage and a
+ * host's own section nav (e.g. col2) should read from this single registry
+ * so they can never drift.
  */
 export function resolveSettingsSectionGroups(
   access: TenancyAccess,
 ): readonly SettingsSectionGroup[] {
-  return SETTINGS_SECTION_GROUPS.map((group) => ({
-    id: group.id,
-    label: group.label,
-    sections: group.sections
-      .filter(
-        (section) =>
-          section.gate === undefined || access[section.gate] === "allowed",
-      )
-      .map(({ gate: _gate, ...section }) => section),
-  }));
+  return SETTINGS_SECTION_GROUPS.map((group) => {
+    const accessProbeFailed = group.sections.some(
+      (section) =>
+        section.gate !== undefined && access[section.gate] === "error",
+    );
+    return {
+      id: group.id,
+      label: group.label,
+      sections: group.sections
+        .filter(
+          (section) =>
+            section.gate === undefined || access[section.gate] === "allowed",
+        )
+        .map(({ gate: _gate, ...section }) => section),
+      ...(accessProbeFailed ? { accessProbeFailed: true as const } : {}),
+    };
+  });
 }
 
 /**

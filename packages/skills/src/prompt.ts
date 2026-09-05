@@ -1,7 +1,7 @@
 // The pinned-skills prompt index. A definition that pins skills gets an
 // `<available_skills>` stanza appended to its system prompt at push
 // time — name and description only, plus the instruction to call
-// `load_skill` for the body.
+// `skills_load` for the body.
 //
 // Index-only is the whole point: a skill body is arbitrarily long and
 // most turns need none of it, so inlining every pinned body would burn
@@ -10,7 +10,7 @@
 export const AVAILABLE_SKILLS_OPEN_TAG = "<available_skills>";
 export const AVAILABLE_SKILLS_CLOSE_TAG = "</available_skills>";
 
-export const LOAD_SKILL_TOOL = "load_skill";
+export const SKILLS_LOAD_TOOL = "skills_load";
 
 export type PinnedSkillIndexEntry = {
   readonly name: string;
@@ -31,7 +31,7 @@ export function buildAvailableSkillsStanza(
     AVAILABLE_SKILLS_OPEN_TAG,
     "These skills are available to you. Only their names and descriptions",
     `are listed here. To read a skill's full instructions, call the`,
-    `\`${LOAD_SKILL_TOOL}\` tool with that skill's name — never assume its`,
+    `\`${SKILLS_LOAD_TOOL}\` tool with that skill's name — never assume its`,
     "contents from the description alone.",
     "",
     ...lines,

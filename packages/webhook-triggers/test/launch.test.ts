@@ -91,6 +91,11 @@ const TRIGGER = {
   lastFiredAt: null,
 };
 
+const taggedCipher = {
+  encrypt: async (plaintext: string) => plaintext,
+  decrypt: async (blob: string) => blob,
+};
+
 let persistLaunchCalls: unknown[] = [];
 let recordLaunchSourcesCalls: unknown[] = [];
 const persistedLaunchExtra = async () => {};
@@ -103,6 +108,7 @@ function baseDeps() {
     sidecarRouter: {} as never,
     toolGrantsForPins: () => [],
     eventCollectors: {} as never,
+    credentialCipher: taggedCipher,
     cryptoProviderCache: { get: async () => ({}) as never },
     launchMode: { kind: "section" as const, turnTimeoutMs: 60_000 },
     persistLaunch: (input: unknown) => {
@@ -236,5 +242,47 @@ describe("launchWebhookTrigger", () => {
     expect(recordLaunchSourcesCalls).toEqual([
       { instanceId: result.instanceId, sourcesDigest: "digest_run1" },
     ]);
+  });
+
+  // Catalog secrets are encrypted at rest. Without the boot-tagged cipher
+  // on this path, launchFoldedRun would hand ciphertext to the provider as
+  // an API key. Tag construction is the fail-closed gate.
+  test("threads the tagged credentialCipher into launchFoldedRun", async () => {
+    launchFoldedRunCalls = [];
+    sendFoldedMailWithRetryCalls = [];
+    sendFoldedMailWithRetryResult = { ok: true, mail: { id: "m_1" } };
+
+    await launchWebhookTrigger(baseDeps(), TRIGGER, { status: "ok" });
+
+    expect(launchFoldedRunCalls).toHaveLength(1);
+    const [foldedDeps] = launchFoldedRunCalls[0] as [
+      { credentialCipher: unknown },
+      unknown,
+    ];
+    expect(foldedDeps.credentialCipher).toBe(taggedCipher);
+  });
+
+  test("refuses to launch when credentialCipher is missing", async () => {
+    launchFoldedRunCalls = [];
+    await expect(
+      launchWebhookTrigger(
+        { ...baseDeps(), credentialCipher: undefined as never },
+        TRIGGER,
+        { status: "ok" },
+      ),
+    ).rejects.toThrow(/missing or has the wrong shape/);
+    expect(launchFoldedRunCalls).toHaveLength(0);
+  });
+
+  test("refuses to launch when credentialCipher has the wrong shape", async () => {
+    launchFoldedRunCalls = [];
+    await expect(
+      launchWebhookTrigger(
+        { ...baseDeps(), credentialCipher: {} as never },
+        TRIGGER,
+        { status: "ok" },
+      ),
+    ).rejects.toThrow(/missing or has the wrong shape/);
+    expect(launchFoldedRunCalls).toHaveLength(0);
   });
 });

@@ -21,7 +21,7 @@ import {
 import { Users, WarningCircle } from "@corbits/icons";
 import { useEffect, useState } from "react";
 
-import { humanizeSlug } from "@corbits/chat/display-name";
+import { deriveDisplayName } from "@corbits/chat/display-name";
 import {
   ChatApiError,
   describeChatError,
@@ -153,14 +153,18 @@ export function InviteAgentDialog({
           ) : (
             <ul className="chat-invitable-list">
               {state.items.map((definition) => {
-                // `description` carries the definition's real display
-                // name (set at creation), never a summary sentence — see
-                // `InvitableDefinition`'s own doc comment — so the
-                // fallback below is "no display name was ever set", not
-                // "no description exists". `name` is the immutable slug
-                // and never belongs in the title slot on its own.
-                const displayName =
-                  definition.description ?? humanizeSlug(definition.name);
+                // One canonical rule for "what does this agent look like
+                // to a person" (CL-6424) — the description when one was
+                // set at creation, else a humanized reading of the
+                // immutable slug — never a scattered reimplementation
+                // that could drift (or leak an internal id as a fake
+                // name) beside `@corbits/chat/display-name`.
+                const displayName = deriveDisplayName({
+                  name: definition.name,
+                  ...(definition.description !== undefined
+                    ? { description: definition.description }
+                    : {}),
+                });
                 return (
                   <li
                     key={definition.id}

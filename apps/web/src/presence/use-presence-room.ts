@@ -5,7 +5,12 @@
 // disconnect lifecycle to reason about per (tenant, surface) pair.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
-import { connectPresence, type PresenceHandle } from "@corbits/presence/client";
+import { reportError } from "@corbits/error-sink";
+import {
+  connectPresence,
+  type PresenceError,
+  type PresenceHandle,
+} from "@corbits/presence/client";
 
 export interface PresenceRoomMember {
   readonly principalId: string;
@@ -19,8 +24,12 @@ export interface PresenceRoomMember {
   readonly typing?: boolean;
 }
 
+/** Healthy until two consecutive transport failures; a single retry stays quiet. */
+export type PresenceConnection = "ok" | "degraded";
+
 export interface PresenceRoom {
   readonly members: readonly PresenceRoomMember[];
+  readonly connection: PresenceConnection;
   readonly publishCursor: (
     x: number,
     y: number,
@@ -40,6 +49,16 @@ export interface UsePresenceRoomOptions {
   readonly doc?: Y.Doc;
   /** Called for every confirmed server-side snapshot — see `formatSaveStateLine` in `@corbits/artifact-ui`. */
   readonly onSaved?: (info: { version: number; savedAt: number }) => void;
+  /** The signed-in principal, carried on `reportError` so a failed join is scoped. */
+  readonly principalId?: string;
+}
+
+const TRANSIENT_FAILURE_BUDGET = 1;
+
+function presenceErrorMessage(error: PresenceError): string {
+  return error.status === undefined
+    ? `Presence ${error.operation} failed`
+    : `Presence ${error.operation} failed (${String(error.status)})`;
 }
 
 /**
@@ -56,7 +75,9 @@ export function usePresenceRoom(
   options?: UsePresenceRoomOptions,
 ): PresenceRoom {
   const [members, setMembers] = useState<readonly PresenceRoomMember[]>([]);
+  const [connection, setConnection] = useState<PresenceConnection>("ok");
   const handleRef = useRef<PresenceHandle | null>(null);
+  const consecutiveFailuresRef = useRef(0);
   // `onSaved` is read through a ref, not a `connectPresence` dependency:
   // a caller re-rendering with a fresh inline callback must never tear
   // down and reconnect the stream (it would re-fetch the whole doc state
@@ -64,10 +85,14 @@ export function usePresenceRoom(
   // different room to sync.
   const onSavedRef = useRef(options?.onSaved);
   onSavedRef.current = options?.onSaved;
+  const principalIdRef = useRef(options?.principalId);
+  principalIdRef.current = options?.principalId;
   const doc = options?.doc;
 
   useEffect(() => {
     setMembers([]);
+    setConnection("ok");
+    consecutiveFailuresRef.current = 0;
     if (tenantId === null || surface === null) {
       handleRef.current = null;
       return;
@@ -88,8 +113,31 @@ export function usePresenceRoom(
     const unsubscribe = handle.subscribe((snapshot) =>
       setMembers(snapshot as readonly PresenceRoomMember[]),
     );
+    const unsubscribeErrors = handle.onError((error) => {
+      const extra: Record<string, unknown> = {};
+      if (principalIdRef.current !== undefined) {
+        extra.principalId = principalIdRef.current;
+      }
+      if (error.status !== undefined) extra.status = error.status;
+      reportError(new Error(presenceErrorMessage(error)), {
+        operation: `presence.${error.operation}`,
+        tenantId,
+        roomId: surface,
+        ...(Object.keys(extra).length > 0 ? { extra } : {}),
+      });
+      consecutiveFailuresRef.current += 1;
+      if (consecutiveFailuresRef.current > TRANSIENT_FAILURE_BUDGET) {
+        setConnection("degraded");
+      }
+    });
+    const unsubscribeRecovered = handle.onRecovered(() => {
+      consecutiveFailuresRef.current = 0;
+      setConnection("ok");
+    });
     return () => {
       unsubscribe();
+      unsubscribeErrors();
+      unsubscribeRecovered();
       handle.disconnect();
       handleRef.current = null;
     };
@@ -108,5 +156,5 @@ export function usePresenceRoom(
     handleRef.current?.publishTyping(typing);
   }, []);
 
-  return { members, publishCursor, publishTyping };
+  return { members, connection, publishCursor, publishTyping };
 }

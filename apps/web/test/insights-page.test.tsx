@@ -27,7 +27,7 @@ import {
   InsightsRunDetail,
   InsightsRunsHistory,
 } from "../src/pages/insights-page";
-import type { Routine } from "../src/routines-api";
+import type { ScheduledWorkflowDefinition } from "../src/routines-api";
 import { TestQueryProvider } from "./test-query-provider";
 
 const range = createInsightsWindow(7, new Date("2026-01-15T18:00:00.000Z"));
@@ -36,7 +36,7 @@ const emptyRuns: APIQuery<{ data: readonly never[]; nextCursor: null }> = {
   kind: "ready",
   data: { data: [], nextCursor: null },
 };
-const emptyRoutines: APIQuery<readonly Routine[]> = {
+const emptyRoutines: APIQuery<readonly ScheduledWorkflowDefinition[]> = {
   kind: "ready",
   data: [],
 };
@@ -563,7 +563,7 @@ describe("InsightsRunsHistory definition grouping", () => {
     expect(groups[0]?.getAttribute("data-definition-group")).toBe("wfd_a");
     const firstGroupRows = groups[0]?.querySelectorAll("tbody tr") ?? [];
     expect(firstGroupRows.length).toBe(2);
-    expect(firstGroupRows[0]?.textContent).toContain("error");
+    expect(firstGroupRows[0]?.textContent).toContain("Failed");
     expect(el.textContent).not.toContain("Showing the 100 most recent runs.");
   });
 

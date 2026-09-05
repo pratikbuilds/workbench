@@ -16,7 +16,7 @@
     "@corbits/error-sink": "workspace:*",
     "@intx/hub-api": "workspace:*",
     "arktype": "catalog:",
-    "hono": "^4.11.9"
+    "hono": "catalog:"
   },
   "devDependencies": {
     "@types/bun": "catalog:",

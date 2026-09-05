@@ -14,21 +14,17 @@ import { type } from "arktype";
 import { Hono } from "hono";
 
 import type { TenantEnv, RequireGrant } from "@intx/hub-api";
-import { getLogger } from "@intx/log";
-
 import {
   FoldedRunFailedError,
   FoldedRunTimedOutError,
 } from "@corbits/folded-run-one-shot";
-import { makeErrorEnvelope } from "@corbits/error-sink";
+import { makeErrorEnvelope, reportError } from "@corbits/error-sink";
 import {
   AgentDefinitionDraftReferenceOutOfInventoryError,
   AgentDefinitionDraftReplyUnparseableError,
   MyraAgentDefinitionDraftingUnavailableError,
   type AgentDefinitionDraft,
 } from "./agent-definition-drafting";
-
-const log = getLogger(["agent-directory", "agent-definition-draft-routes"]);
 
 const DRAFT_FAILED_MESSAGE =
   "Myra couldn't draft a starting prompt for that. Write one yourself, or try again.";
@@ -138,14 +134,17 @@ export function createAgentDefinitionDraftRoutes(
         });
         return c.json({ draft }, 201);
       } catch (err) {
-        log.error`agent definition drafting failed for tenant ${tenant.id}: ${
-          err instanceof Error ? err.message : String(err)
-        }`;
         if (isDraftingFailure(err)) {
+          const refId = reportError(err, {
+            operation: "agentDirectory.draftAgentDefinition",
+            tenantId: tenant.id,
+            extra: { principalId: principal.id },
+          });
           return c.json(
             makeErrorEnvelope({
               code: "drafting_failed",
               userMessage: DRAFT_FAILED_MESSAGE,
+              refId,
             }),
             422,
           );

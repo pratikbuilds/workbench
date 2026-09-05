@@ -13,6 +13,7 @@ import type { ConnectorDescriptor } from "./descriptor";
 import {
   isInferenceProvider,
   persistConnectorCredential,
+  type PersistConnectorCredentialArgs,
 } from "./persist-credential";
 /** Minimal fixtures standing in for the real connector set a build's own
  * `templates/connectors.ts` carries — this package holds no concrete
@@ -265,4 +266,13 @@ test("a refresh secret rides into the credential row alongside oauth_token typin
     type: "oauth_token",
     refreshSecret: "1//refresh",
   });
+});
+
+test("persist does not take a credentialCipher — wiring is asserted at tag construction and hub boot, not per persist", () => {
+  type PersistHasCipher =
+    "credentialCipher" extends keyof PersistConnectorCredentialArgs
+      ? true
+      : false;
+  const persistHasCipher: PersistHasCipher = false;
+  expect(persistHasCipher).toBe(false);
 });

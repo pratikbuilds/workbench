@@ -1,20 +1,19 @@
 # @corbits/workbench-digest-workflow
 
-A single mail-triggered step meant to be deployed against a workbench's
-own timeline address. It relays whatever deterministic summary line its
-trigger mail already carries — a message count, a timestamp, any line a
-scheduler computed ahead of time — straight back into the workbench,
-mirroring how a workbench host's reply becomes a workbench mail post (see
-`packages/chat/src/workbench-workflow.ts` and `platform-adapter.ts`).
+A single schedule-triggered step meant to be deployed against a
+workbench's own timeline address. It fires daily at 09:00 UTC
+(`0 9 * * *`) and relays a deterministic summary line straight back
+into the workbench, mirroring how a workbench host's reply becomes a
+workbench mail post (see `packages/chat/src/workbench-workflow.ts` and
+`platform-adapter.ts`).
 
 ## What it does
 
 One step, one agent, a system prompt that instructs relaying the
 trigger's exact text with no additions, no commentary, no formatting of
-its own. The deterministic content — the actual digest line — is
-computed by whatever sends the trigger mail; this definition never
-computes it itself, so its output is exactly as deterministic as its
-input.
+its own. The schedule is fixed on the definition; this package never
+computes the digest line itself, so its output is exactly as
+deterministic as its input.
 
 ## Cost profile
 
@@ -43,7 +42,6 @@ import {
 } from "@corbits/workbench-digest-workflow";
 
 const definition = buildWorkbenchDigestWorkflow({
-  triggerAddress: "workbench-digest@tenant.example",
   inferencePreferences: [{ provider: "anthropic", model: "noop" }],
   turnTimeoutMs: 60_000,
 });
@@ -52,5 +50,6 @@ const json = serializeWorkbenchDigestWorkflow(definition);
 ```
 
 See [`workflows/README.md`](../README.md#status-note) for what
-registration/automatable/seeded mean — this one is seeded by default for
-every tenant.
+registration/automatable/seeded mean — this one is `automatable`, and
+deployable through the catalog instantiate route (CL-7073) from
+`CATALOG_WORKFLOWS` (CL-7074), not seeded by default onto every tenant.

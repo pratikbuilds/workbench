@@ -70,7 +70,11 @@ export type { PrincipalLabel } from "./identity";
 export { GRANT_RESOURCES, GRANT_ACTIONS } from "./resource-vocabulary";
 export type { GrantResource, GrantAction } from "./resource-vocabulary";
 
-export { useTenancyAccess } from "./access";
+export {
+  useTenancyAccess,
+  probeSectionAccess,
+  coalesceSectionAccess,
+} from "./access";
 export type { SectionAccess, TenancyAccess } from "./access";
 
 export {

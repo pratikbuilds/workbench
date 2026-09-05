@@ -4,8 +4,7 @@
 // `startMcpFake` (./mcp-fake-server.ts) replays. Checked into the repo
 // as plain JSON under `recordings/` — deterministic and reviewable in
 // a PR diff, the same "record-as-truth JSON, no migration" convention
-// `@corbits/routines`' `routine.trigger`/`routine.input` columns
-// already use.
+// other product JSON columns already use.
 import { type } from "arktype";
 
 export interface RecordedCall {

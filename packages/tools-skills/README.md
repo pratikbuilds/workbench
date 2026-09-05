@@ -1,12 +1,12 @@
 # @corbits/tools-skills
 
-`skills_list`, `skills_search`, and `load_skill` as an `@intx/agent` tool
+`skills_list`, `skills_search`, and `skills_load` as an `@intx/agent` tool
 bundle — the agent-facing half of the workbench's skill registry
 (`@corbits/skills`).
 
 A definition's pinned skills already appear in its system prompt's
 `<available_skills>` index, with names and descriptions only.
-`load_skill` is how a model turns one of those names into the actual
+`skills_load` is how a model turns one of those names into the actual
 instructions, so the index stays cheap and only the skills a turn truly
 needs are paid for in context.
 

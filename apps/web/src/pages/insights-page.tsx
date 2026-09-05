@@ -13,7 +13,6 @@ import {
   PageShell,
   RichEmptyState,
   RUN_STATUS_DOT_TONE,
-  RUN_STATUS_LABEL,
   RUN_STATUS_TONE,
   Skeleton,
   StatGrid,
@@ -33,6 +32,11 @@ import {
   type TraceSpan,
 } from "@corbits/react-ui";
 import { ChartBar } from "@corbits/icons";
+import {
+  runOutcomeStatus,
+  runStatusLabel,
+  withListingAbandoned,
+} from "@corbits/workflows/client";
 import type * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -46,6 +50,7 @@ import {
   formatUsd,
   INSIGHTS_WINDOW_DAYS,
   modelsWithMissingRates,
+  modelsWithUnreportedTokens,
   tokensLabel,
   topModelsByCost,
   type DayActivity,
@@ -54,7 +59,7 @@ import {
   type OverallUsage,
 } from "@corbits/insights/client";
 
-import type { WorkflowRunStatus } from "@intx/types";
+import { workflowRunStatuses, type WorkflowRunStatus } from "@intx/types";
 import { SignedOutNotice, type APIQuery } from "@corbits/api-query";
 import {
   workbenchesQueryKey,
@@ -107,7 +112,11 @@ import { useNavigate } from "../navigation";
 import { tenantKeys } from "../query-client";
 import { INSIGHTS_PATH_PREFIX, INSIGHTS_RUNS_PATH } from "../path-ids";
 import { StageTopBar } from "../shell/stage-top-bar";
-import { listRoutines, useTenantQuery, type Routine } from "../routines-api";
+import {
+  listScheduledWorkflows,
+  useTenantQuery,
+  type ScheduledWorkflowDefinition,
+} from "../routines-api";
 import { WorkbenchTimelineRoute } from "./workbench-timeline";
 
 function dash(value: string | number | null | undefined): string {
@@ -143,6 +152,18 @@ const WORKFLOW_RUN_STATUS_ALIAS: Readonly<
 
 export function statusTone(status: WorkflowRunStatus): BadgeTone {
   return RUN_STATUS_TONE[WORKFLOW_RUN_STATUS_ALIAS[status]];
+}
+
+function isWorkflowRunStatus(status: string): status is WorkflowRunStatus {
+  return workflowRunStatuses.some((value) => value === status);
+}
+
+function insightsStatusTone(status: string): BadgeTone {
+  if (status === "completed") return RUN_STATUS_TONE.completed;
+  if (status === "failed") return RUN_STATUS_TONE.failed;
+  if (status === "cancelled") return RUN_STATUS_TONE.stopped;
+  if (isWorkflowRunStatus(status)) return statusTone(status);
+  return "neutral";
 }
 
 function tileValue(value: string | number | null, loading: boolean): string {
@@ -388,13 +409,17 @@ function runOutcomeData(stats: {
   ];
 }
 
-/** Tokens-by-model series for the tokens-over-time chart — token volume
- * (unlike cost) is always a known number for a recorded turn, so this
- * stays honest for every model without a null-rate caveat. Capped to the
- * top models by cost (the models that matter most to the spend story),
- * same as `TimeSeriesChart`'s own "≤5 series" rule. */
+/** Tokens-by-model series for the tokens-over-time chart. Token volume is
+ * a known number only when the adapter reported it; unreported turns are
+ * excluded from this series rather than plotted as a silent zero. Capped
+ * to the top models by cost (the models that matter most to the spend
+ * story), same as `TimeSeriesChart`'s own "≤5 series" rule. */
 function tokensOverTimeSeries(days: readonly DayActivity[]) {
-  const models = topModelsByCost(days);
+  const models = topModelsByCost(days).filter((model) =>
+    days.some(
+      (d) => (d.byModel.find((m) => m.model === model)?.tokens ?? 0) > 0,
+    ),
+  );
   return models.map((model) => ({
     label: model,
     values: days.map(
@@ -455,9 +480,21 @@ function useTickingNow(enabled: boolean): number {
 
 /** A run actually in flight right now (`status: running | updating`) —
  * liveness is not a windowed property, so this filters the full run set,
- * never the range-filtered one. */
-function isRunningNow(run: InsightsRun): boolean {
-  return run.status === "running" || run.status === "updating";
+ * never the range-filtered one. A persisted `endedAt` means the fire
+ * already finished, even if `status` still reads `running`. A live fire
+ * with an in-flight turn stays in flight however old it is; without an
+ * explicit no-in-flight signal, missing `turns` is not abandonment.
+ */
+export function isRunningNow(
+  run: InsightsRun,
+  now: number = Date.now(),
+): boolean {
+  const outcome = runOutcomeStatus(withListingAbandoned(run, now), now);
+  return outcome === "running" || outcome === "updating";
+}
+
+function insightsRunStatus(run: InsightsRun, now: number = Date.now()): string {
+  return runOutcomeStatus(withListingAbandoned(run, now), now) ?? run.status;
 }
 
 /**
@@ -475,8 +512,11 @@ function RunningNowStrip({
   readonly runs: readonly InsightsRun[];
   readonly onOpenRun: (id: string) => void;
 }) {
-  const running = runs.filter(isRunningNow);
-  const now = useTickingNow(running.length > 0);
+  const maybeLive = runs.some(
+    (run) => run.status === "running" || run.status === "updating",
+  );
+  const now = useTickingNow(maybeLive);
+  const running = runs.filter((run) => isRunningNow(run, now));
   if (running.length === 0) return null;
 
   return (
@@ -496,7 +536,7 @@ function RunningNowStrip({
               onClick={() => onOpenRun(run.id)}
             >
               <StatusDot
-                label={RUN_STATUS_LABEL.running}
+                label={runStatusLabel("running")}
                 tone={RUN_STATUS_DOT_TONE.running}
                 live
               />
@@ -507,7 +547,7 @@ function RunningNowStrip({
                 {elapsedLabel(run.createdAt, now)}
               </span>
               <Badge tone={RUN_STATUS_TONE.running}>
-                {RUN_STATUS_LABEL.running}
+                {runStatusLabel("running")}
               </Badge>
             </button>
           </li>
@@ -541,13 +581,25 @@ function ModelCostTable({
           <TableRow key={m.model}>
             <TableCell title={m.model}>{m.model}</TableCell>
             <TableCell>
-              {m.costUsd === null && m.tokens.total > 0
+              {m.costUsd === null || (m.tokens.total === 0 && m.turns > 0)
                 ? "—"
                 : formatUsd(m.costUsd)}
             </TableCell>
-            <TableCell>{formatCount(m.tokens.input)}</TableCell>
-            <TableCell>{formatCount(m.tokens.cacheRead)}</TableCell>
-            <TableCell>{formatCount(m.tokens.output)}</TableCell>
+            <TableCell>
+              {m.tokens.total === 0 && m.turns > 0
+                ? "—"
+                : formatCount(m.tokens.input)}
+            </TableCell>
+            <TableCell>
+              {m.tokens.total === 0 && m.turns > 0
+                ? "—"
+                : formatCount(m.tokens.cacheRead)}
+            </TableCell>
+            <TableCell>
+              {m.tokens.total === 0 && m.turns > 0
+                ? "—"
+                : formatCount(m.tokens.output)}
+            </TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -612,7 +664,9 @@ function RecentRunRows({
               </div>
             </TableCell>
             <TableCell className="text-right">
-              <Badge tone={statusTone(row.status)}>{row.status}</Badge>
+              <Badge tone={insightsStatusTone(insightsRunStatus(row))}>
+                {runStatusLabel(insightsRunStatus(row))}
+              </Badge>
             </TableCell>
           </TableRow>
         ))}
@@ -656,7 +710,7 @@ function InsightsLanding({
    * disclose the cap instead of silently presenting a truncated series as
    * complete. */
   readonly runsNextCursor: string | null;
-  readonly routines: readonly Routine[];
+  readonly routines: readonly ScheduledWorkflowDefinition[];
   /** Null while `/workbenches` hasn't resolved (or this landing is already
    * scoped to one workbench, where a breakdown of one has nothing to
    * show) — the activity-by-workbench chart and active-workbenches KPI
@@ -680,7 +734,9 @@ function InsightsLanding({
   // `range.from` and is still going is running right now regardless of when
   // it started, so "Running now" reads off every fetched run, never the
   // range-filtered subset above.
-  const runningNow = purposeRunsForInsights(runs).filter(isRunningNow);
+  const runningNow = purposeRunsForInsights(runs).filter((run) =>
+    isRunningNow(run),
+  );
 
   // Absent usage → zeros at the client boundary (never demo peaks / em-dash
   // for "no spend"). Real fetched summary is preserved when present.
@@ -688,6 +744,8 @@ function InsightsLanding({
   const mosaicParts = tokenParts(usage);
   const hitRate = cacheHitRate(usage);
   const missingRates = modelsWithMissingRates(usage);
+  const unreportedTokens = modelsWithUnreportedTokens(usage);
+  const tokensUnreported = usage.turns > 0 && usage.tokens.total === 0;
   const activityDays = activitySeriesForWindow(activity ?? [], range);
   const activityWindowEmpty = recentActivityDays(activityDays).every(
     (d) => d.turns === 0,
@@ -704,7 +762,9 @@ function InsightsLanding({
   const tokensSparkline = activityDays.map((d) => d.tokens);
   const runsSparkline = runsPerDay(purposeRuns, activityDays);
   const costSparkline =
-    missingRates.length === 0 ? costPerDay(activityDays) : undefined;
+    missingRates.length === 0 && unreportedTokens.length === 0
+      ? costPerDay(activityDays)
+      : undefined;
 
   return (
     <div className="insights-layout">
@@ -712,8 +772,15 @@ function InsightsLanding({
         {noUsageInWindow ? null : (
           <InsightsStat
             label="Cost"
-            value={tileValue(formatUsd(usage.costUsd), loading)}
-            detail={`${formatCount(usage.tokens.total)} tokens`}
+            value={tileValue(
+              tokensUnreported ? "—" : formatUsd(usage.costUsd),
+              loading,
+            )}
+            detail={
+              tokensUnreported
+                ? "Token counts were not reported"
+                : `${formatCount(usage.tokens.total)} tokens`
+            }
             loading={loading}
             sparklineLabel="Cost per day this week"
             {...(costSparkline === undefined
@@ -735,12 +802,14 @@ function InsightsLanding({
           <InsightsStat
             label="Tokens in / out"
             value={tileValue(
-              `${formatCount(usage.tokens.input)} / ${formatCount(usage.tokens.output)}`,
+              tokensUnreported
+                ? "—"
+                : `${formatCount(usage.tokens.input)} / ${formatCount(usage.tokens.output)}`,
               loading,
             )}
-            detail="input / output"
+            detail={tokensUnreported ? "not reported" : "input / output"}
             loading={loading}
-            sparklineValues={tokensSparkline}
+            {...(tokensUnreported ? {} : { sparklineValues: tokensSparkline })}
             sparklineLabel="Tokens per day this week"
           />
         )}
@@ -809,6 +878,13 @@ function InsightsLanding({
 
       {noUsageInWindow && !activityWindowEmpty ? (
         <p className="insights-note">No usage recorded yet in this window.</p>
+      ) : null}
+
+      {unreportedTokens.length > 0 ? (
+        <p className="insights-note">
+          Token counts were not reported for: {unreportedTokens.join(", ")}.
+          Those turns do not contribute a fabricated cost or token total.
+        </p>
       ) : null}
 
       {missingRates.length > 0 ? (
@@ -999,7 +1075,9 @@ function DefinitionRunTable({
               {...onRowActivate(() => onOpenRun(row.id))}
             >
               <TableCell>
-                <Badge tone={statusTone(row.status)}>{row.status}</Badge>
+                <Badge tone={insightsStatusTone(insightsRunStatus(row))}>
+                  {runStatusLabel(insightsRunStatus(row))}
+                </Badge>
               </TableCell>
               <TableCell>{formatWhen(row.createdAt)}</TableCell>
               <TableCell>{runDurationLabel(row)}</TableCell>
@@ -1299,7 +1377,7 @@ export function InsightsPage({
     data: readonly InsightsRun[];
     nextCursor: string | null;
   }>;
-  readonly routines: APIQuery<readonly Routine[]>;
+  readonly routines: APIQuery<readonly ScheduledWorkflowDefinition[]>;
   /** `/workbenches` — this scope's own row plus one per descendant
    * workbench, used for the "activity by workbench" chart and the
    * "active workbenches" KPI. */
@@ -1678,10 +1756,10 @@ export function InsightsRoute({ path }: { readonly path?: string }) {
       ? ["tenant", "none", "routines"]
       : tenantKeys.routines(selectedTenantId),
     selectedTenantId !== null,
-    () => listRoutines(selectedTenantId as string),
+    () => listScheduledWorkflows(selectedTenantId as string),
   );
 
-  const routinesForPage: APIQuery<readonly Routine[]> =
+  const routinesForPage: APIQuery<readonly ScheduledWorkflowDefinition[]> =
     selectedTenantId === null ? { kind: "ready", data: [] } : routines;
 
   // Unwrap package envelopes ({ days }, { tools }) for the page surface.

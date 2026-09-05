@@ -1,15 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
+import { FIRE_RUNNING_WINDOW_MS } from "@corbits/workflows/client";
+
 import {
   computeInsightsStats,
   computeTraceStats,
   filterRunsByCreatedAt,
   groupRunsByDefinition,
+  INSIGHTS_RECENT_LIMIT,
   purposeRunsForInsights,
   runDisplayName,
 } from "./insights-stats";
 import type { InsightsRun, RunTraceSpan } from "./insights-api";
-import type { Routine } from "./routines-api";
+import type { ScheduledWorkflowDefinition } from "./routines-api";
 
 function span(
   partial: Partial<RunTraceSpan> & Pick<RunTraceSpan, "id">,
@@ -44,20 +47,15 @@ function run(
   };
 }
 
-function routine(
-  partial: Partial<Routine> & Pick<Routine, "id" | "enabled">,
-): Routine {
+function scheduled(
+  partial: Partial<ScheduledWorkflowDefinition> &
+    Pick<ScheduledWorkflowDefinition, "definitionId" | "status">,
+): ScheduledWorkflowDefinition {
   return {
+    assetId: "ast_def",
     name: "Daily dig",
-    definitionAssetId: "ast_def",
-    definitionId: "def",
-    trigger: { kind: "interval", unit: "hours", every: 24 },
-    scope: "bench",
-    input: {},
-    deliveryWorkbenchId: null,
-    consecutiveFailures: 0,
-    deadLetteredAt: null,
-    nextFireAt: null,
+    tenantId: "t1",
+    cron: "0 9 * * *",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...partial,
@@ -91,9 +89,11 @@ describe("computeInsightsStats", () => {
         }),
       ],
       [
-        routine({ id: "r1", enabled: true }),
-        routine({ id: "r2", enabled: false }),
+        scheduled({ definitionId: "r1", status: "deployed" }),
+        scheduled({ definitionId: "r2", status: "stopped" }),
       ],
+      INSIGHTS_RECENT_LIMIT,
+      Date.parse("2026-01-03T00:01:00.000Z"),
     );
 
     expect(stats.totalRuns).toBe(3);
@@ -103,6 +103,37 @@ describe("computeInsightsStats", () => {
     expect(stats.routineCount).toBe(2);
     expect(stats.enabledRoutines).toBe(1);
     expect(stats.recentRuns.map((r) => r.id)).toEqual(["1", "2", "3"]);
+  });
+
+  test("a live running run past the fire window is still counted as running", () => {
+    const stats = computeInsightsStats(
+      [
+        run({
+          id: "stale",
+          status: "running",
+          createdAt: new Date(
+            Date.now() - FIRE_RUNNING_WINDOW_MS - 1,
+          ).toISOString(),
+        }),
+      ],
+      [],
+    );
+    expect(stats.running).toBe(1);
+  });
+
+  test("endedAt drops a just-finished running run from the running count immediately", () => {
+    const stats = computeInsightsStats(
+      [
+        run({
+          id: "just-finished",
+          status: "running",
+          createdAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+        }),
+      ],
+      [],
+    );
+    expect(stats.running).toBe(0);
   });
 
   test("limits recent runs", () => {

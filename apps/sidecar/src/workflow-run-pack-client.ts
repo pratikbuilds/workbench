@@ -647,6 +647,16 @@ export type WorkflowRunPackPushingRepoStore = RepoStore & {
    * failing -- is what lets the reconnect re-ship wait for the challenge.
    */
   markAddressUnroutable: (agentAddress: string) => void;
+  /**
+   * Drop coalescing slots and routability blocks for a torn-down
+   * deployment. Called from the boot edge's `unregisterDeployment`
+   * hook so an undeploy does not leave a slot (and its blocked address)
+   * in this process-wide map forever.
+   */
+  reclaimPushState: (entry: {
+    deploymentId: string;
+    agentAddress: string;
+  }) => void;
 };
 
 export function createWorkflowRunPackPushingRepoStore(
@@ -767,6 +777,18 @@ export function createWorkflowRunPackPushingRepoStore(
     blockedAddresses.add(agentAddress);
   }
 
+  function reclaimPushState(entry: {
+    deploymentId: string;
+    agentAddress: string;
+  }): void {
+    blockedAddresses.delete(entry.agentAddress);
+    for (const [key, slot] of slots) {
+      if (slot.repoId.id === entry.deploymentId) {
+        slots.delete(key);
+      }
+    }
+  }
+
   function notifyAddressRoutable(agentAddress: string): void {
     // The reconnect challenge re-routed this address on the hub. Clear the
     // block and re-drive so a push the disconnect cancelled -- or one held
@@ -833,6 +855,7 @@ export function createWorkflowRunPackPushingRepoStore(
     flushWorkflowRunPushes,
     notifyAddressRoutable,
     markAddressUnroutable,
+    reclaimPushState,
     async writeTreePreservingPrefix(principal, repoId, ref, args) {
       if (repoId.kind === "workflow-run") {
         const latched = takeLatchedError(repoId, ref);

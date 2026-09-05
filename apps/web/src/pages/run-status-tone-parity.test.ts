@@ -19,7 +19,6 @@ import { describe, expect, test } from "bun:test";
 import { RUN_STATUS_TONE } from "@corbits/react-ui";
 
 import { statusTone } from "./insights-page";
-import { runStatusTone } from "./routines-page";
 import { computeInFlightRows } from "./mission-control-page";
 import { AGENT_ROSTER_STATUS_TONE } from "./agents-page";
 import type { RoutineActivityItem } from "../shell/routine-activity";
@@ -30,12 +29,6 @@ describe("run-status tone parity with react-ui's RUN_STATUS_TONE", () => {
     // RunStatus does — the exact pair the reviewer caught disagreeing.
     expect(statusTone("running")).toBe(RUN_STATUS_TONE.running);
     expect(statusTone("stopped")).toBe(RUN_STATUS_TONE.stopped);
-  });
-
-  test("Routines' runStatusTone agrees with canonical for every shared status", () => {
-    expect(runStatusTone("running")).toBe(RUN_STATUS_TONE.running);
-    expect(runStatusTone("completed")).toBe(RUN_STATUS_TONE.completed);
-    expect(runStatusTone("failed")).toBe(RUN_STATUS_TONE.failed);
   });
 
   test("Mission Control's in-flight rows agree with canonical for every shared status", () => {

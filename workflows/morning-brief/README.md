@@ -119,12 +119,11 @@ errors and the brief honestly reports that source as not connected
 
 ## Scheduling and delivery
 
-This package carries no schedule of its own — cadence lives on the
-`@corbits/routines` Routine that launches it (`RoutineTrigger`), not on
-the workflow definition. The OG ran daily at 13:00 UTC; the closest
-match to its actual cadence (weekday mornings) is the cron escape
-hatch, since `RoutineTrigger`'s `daily`/`weekly` presets cannot express
-"every weekday":
+This package carries no schedule of its own — cadence lives as a native
+`ScheduleTrigger` on the frozen definition (`@corbits/workflows`
+schedule/cron), ticked by the hub poller. The OG ran daily at 13:00 UTC;
+the closest match to its actual cadence (weekday mornings) is a cron
+expression, since daily/weekly presets cannot express "every weekday":
 
 ```json
 {
@@ -135,14 +134,14 @@ hatch, since `RoutineTrigger`'s `daily`/`weekly` presets cannot express
 ```
 
 Delivery — posting the brief into a channel and/or the recipient's
-inbox — is the routines layer's job too: every routine with a
-`deliveryChannelId` gets a delivery thread opened before launch (the
-repo's delivery invariant, `DeliveryThreadPort` in
-`packages/routines/src/routes.ts`), and the launched run's reply lands
-there. This workflow does not need its own persist/notify steps for
-that — it only needs to reply with one clean markdown brief.
+inbox — is the scheduled-fire path's job: a matching `ScheduleTrigger`
+tick launches the definition, and the run's reply lands in the
+workbench it is deployed against. This workflow does not need its own
+persist/notify steps for that — it only needs to reply with one clean
+markdown brief.
 
 See [`workflows/README.md`](../README.md#status-note) for what
 registration/automatable/seeded mean — this one is `automatable: true`
 but not seeded, since it needs real Granola/Linear credentials to be
-useful, unlike `workbench-digest`.
+useful. `workbench-digest` is not seeded either; both are deployable
+through the catalog instantiate route (CL-7073).

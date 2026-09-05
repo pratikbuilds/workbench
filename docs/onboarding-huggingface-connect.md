@@ -150,8 +150,8 @@ documentation that doesn't exist for this shape. So this connect ships
   the "which credentials are due" logic pure and unit-tested in
   `@corbits/notify`, and the store-behind-an-interface seam
   (`CredentialExpirySweepStore`) makes the loop itself testable against
-  an in-memory store, the same shape `@corbits/routines`' `RoutineStore`
-  uses for `routine-scheduler.ts`.
+  an in-memory store, the same store-behind-an-interface seam the hub's
+  native schedule poller uses.
 
 This sweep's live delivery — writing an actual mailbox row — depends on
 `@corbits/mailbox`'s and `@corbits/notify`'s own migrations being

@@ -47,7 +47,6 @@ import type {
 import type { McpFakeRecording } from "../fakes/recording.ts";
 import { startMcpFake } from "../fakes/mcp-fake-server.ts";
 import { startGithubRestFake } from "../fakes/github-rest-fake.ts";
-import { fireRoutineNow } from "./fire-routine.ts";
 import { arrayField, stringField } from "./json-fields.ts";
 import {
   newToolCallsSince,
@@ -930,25 +929,10 @@ export async function bootMyraTarget(
       };
     }
 
-    async function fireRoutine(routineId: string): Promise<Turn> {
-      return fireRoutineNow(
-        {
-          api,
-          hubUrl: hub.baseUrl,
-          tenantId: seeded.tenantId,
-          cookies,
-          sql: sqlClient,
-        },
-        routineId,
-        routineId,
-      );
-    }
-
     const captureWorldSnapshot = infra.captureWorldSnapshot;
     return {
       configName: config.name,
       sendTurn,
-      fireRoutine,
       installTemplate,
       fireWebhook,
       close: closeAll,

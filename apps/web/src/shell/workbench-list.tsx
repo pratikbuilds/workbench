@@ -17,6 +17,7 @@ import {
 import { toast } from "@corbits/react-ui";
 import {
   CHAT_STRINGS,
+  CorbitAvatar,
   displayWorkbenchTitle,
   workbenchesQueryKeyPrefix,
   patchWorkbenchSettings,
@@ -313,11 +314,23 @@ function WorkbenchRow({
         data-active={active ? "true" : undefined}
         onClick={onSelect}
       >
-        {/* The workbench's own initial, not its agent's — a DM and a
-            channel can share an agent, so an agent monogram would
-            collapse both rows into the same letter. */}
+        {/* The workbench's own initial for multi-party channels, or
+            the Corbit avatar for agent DM conversations. */}
         <span className="shell-ch-stack" aria-hidden="true">
-          <span>{displayTitle.slice(0, 1).toUpperCase()}</span>
+          {workbench.kind === "chat" ? (
+            <span
+              data-agent="true"
+              className="!overflow-hidden !border-[1.5px] !border-background !bg-transparent !p-0"
+            >
+              <CorbitAvatar
+                size="sm"
+                ariaLabel={displayTitle}
+                className="!static !size-full"
+              />
+            </span>
+          ) : (
+            <span>{displayTitle.slice(0, 1).toUpperCase()}</span>
+          )}
         </span>
         <span className="shell-ch-meta">
           <span className="shell-ch-name-row">

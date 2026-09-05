@@ -193,12 +193,18 @@ export async function settleConnectedService(
     // A room matched only through the template key never wakes an agent:
     // its walkthrough was posted by the product, not asked for by an
     // agent mid-turn, and the room's first agent participant may be a
-    // reviewer whose prompt only speaks JSON. A room whose own
-    // `connections/pending` names the connector did have an agent ask
-    // for it, so that agent still gets woken.
-    const agentAddress = matchedPending
-      ? hostAgentAddress(updated.settings, input.principalId)
-      : undefined;
+    // reviewer whose prompt only speaks JSON. A code-review template
+    // room never wakes on GitHub settle even when `connections/pending`
+    // also names it (CL-6764): reviewers introduce themselves from
+    // canned copy after start-reviewing, and dispatching the first
+    // participant here is a credential-error bubble after a successful
+    // Connect. A non-template room whose own `connections/pending`
+    // names the connector did have an agent ask for it, so that agent
+    // still gets woken.
+    const agentAddress =
+      matchedPending && row.settings["template/id"] !== "code-review"
+        ? hostAgentAddress(updated.settings, input.principalId)
+        : undefined;
     // CL-6741: event-only system row — never a signed-in user text bubble.
     // Sender is the woken agent when there is one; otherwise a synthetic
     // system address so the row never attributes to the connecting person.

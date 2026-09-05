@@ -221,6 +221,7 @@ export function usageChromeLabel(usage: {
 }): string {
   const cost = formatUsd(usage.costUsd);
   const tok = tokensLabel(usage.tokens);
+  if (usage.costUsd === null && tok === undefined) return "—";
   return tok === undefined ? cost : `${cost} · ${tok}`;
 }
 
@@ -228,5 +229,14 @@ export function usageChromeLabel(usage: {
 export function modelsWithMissingRates(usage: OverallUsage): readonly string[] {
   return usage.byModel
     .filter((m) => m.costUsd === null && m.tokens.total > 0)
+    .map((m) => m.model);
+}
+
+/** Models that recorded turns but no token counts — not the same as $0 spend. */
+export function modelsWithUnreportedTokens(
+  usage: OverallUsage,
+): readonly string[] {
+  return usage.byModel
+    .filter((m) => m.turns > 0 && m.tokens.total === 0)
     .map((m) => m.model);
 }

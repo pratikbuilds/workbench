@@ -3,9 +3,10 @@
 // threads on first reply, and creates delivery threads for routine
 // run deliveries.
 //
-// Platform mail `MailContent.replyTo` still carries a *workbench* id for
-// mention fan-out (see codec.ts). Message-id reply correlation is a
-// workbench concern here — do not fork Interchange mail to change that.
+// A thread is also what a dispatched message's RFC 5322 threading headers
+// are derived from (CL-7104): `mailAncestryOf` below walks a message's
+// parent chain, and `./mail-headers.ts` turns that chain into the
+// `References` / `In-Reply-To` a reply correlates back through.
 
 import { and, eq, asc, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -183,6 +184,47 @@ export function resolveTargetThread(args: {
     return { threadId: args.rootThreadId, needsReplyOpen: true };
   }
   return { threadId: args.rootThreadId, needsReplyOpen: false };
+}
+
+/**
+ * The parent chain of a message living in `threadId`, root first: that
+ * thread's anchor message, then the anchor's own anchor. Empty for the
+ * root feed (or a delivery thread), which answers nothing. Bounded by
+ * the two-level cap — a chain is never longer than two entries — so this
+ * walks the parentage rather than recursing without a bound.
+ *
+ * Takes the thread rather than the message on purpose: a message is
+ * posted with its thread on the row before the membership row is
+ * written, and a dispatch that fires in between must still see the
+ * parentage it was posted into.
+ *
+ * This is what a dispatched message's `References` header is built from
+ * (`mailThreadHeaders` in `./mail-headers.ts`): the chain in RFC 5322's
+ * own order, oldest ancestor first.
+ */
+export async function mailAncestryOf(
+  store: Pick<ThreadStore, "getThread" | "threadIdForMessage">,
+  tenantId: string,
+  workbenchId: string,
+  threadId: string | null,
+): Promise<readonly string[]> {
+  const ancestors: string[] = [];
+  let current = threadId;
+  // The cap is two levels (thread → sub-thread), so a chain has at most
+  // two ancestors; the bound is the cap, never a guess about cycles.
+  for (let depth = 0; depth < 2; depth++) {
+    if (current === null) break;
+    const thread = await store.getThread(tenantId, current);
+    if (thread === undefined || thread.parentMessageId === null) break;
+    ancestors.unshift(thread.parentMessageId);
+    current =
+      (await store.threadIdForMessage(
+        tenantId,
+        workbenchId,
+        thread.parentMessageId,
+      )) ?? null;
+  }
+  return ancestors;
 }
 
 export function createInMemoryThreadStore(): ThreadStore {

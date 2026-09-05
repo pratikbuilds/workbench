@@ -55,6 +55,8 @@ import { describe, expect, test } from "bun:test";
 
 import { resetSchema, setupDatabase } from "../db-setup.ts";
 import {
+  CATALOG_WORKFLOWS,
+  catalogWorkflowDeployableOnThisPin,
   createGitWorkflowPusher,
   DEFAULT_WORKFLOWS,
   isLiveDeploymentStatus,
@@ -423,10 +425,29 @@ describe.skipIf(databaseUrl === undefined)(
       );
 
       await hop(
-        "every default workflow — echo, workbench-digest, and assistant — deploys and goes live",
+        "the default workflow (assistant) plus the credential-free on-demand catalog (echo, workbench-digest, last-30-days-research, code-review) deploy and go live (CL-7074: only assistant is seeded automatically; the rest deploy here via the same seeding-library path a real on-demand deploy would use)",
         async () => {
-          await deploySeededWorkflows(DEFAULT_WORKFLOWS);
-          for (const workflow of DEFAULT_WORKFLOWS) {
+          // CATALOG_WORKFLOWS grew (CL-7073) to cover every workflows/
+          // source package, including six whose definition wires a real
+          // `credentialBindings` entry. On the current Interchange pin,
+          // this front's `deployWorkflowSource` port has no
+          // `credentialCipher` seam to resolve those bindings (see
+          // `catalogWorkflowDeployableOnThisPin`,
+          // `docs/seed-reconciliation.md`) — these six cannot deploy
+          // through this front at all right now, and are excluded here
+          // until the Interchange re-pin (CL-7107 / PR #632, pin
+          // 692c3106) adds that seam. This hop keeps asserting
+          // deploy-and-go-live for every workflow this pin CAN deploy;
+          // `template-block-routes.test.ts` covers the excluded ones'
+          // 409 route refusal against fakes.
+          const workflows = [
+            ...DEFAULT_WORKFLOWS,
+            ...CATALOG_WORKFLOWS.filter((workflow) =>
+              catalogWorkflowDeployableOnThisPin(workflow.assetName),
+            ),
+          ];
+          await deploySeededWorkflows(workflows);
+          for (const workflow of workflows) {
             const assetsRes = await api(
               hub.baseUrl,
               "GET",

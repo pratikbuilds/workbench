@@ -5,7 +5,7 @@
 // invited into it, one skill, and interval routines bound to a
 // deployed heartbeat definition pinned at a real target. Mirrors the
 // proven e2e boots (`scripts/e2e/chat.test.ts` for tenancy/workbench
-// mechanics, `scripts/e2e/routine-repeat.test.ts` for the catalog-seed
+// mechanics, `scripts/e2e/workbench-digest.test.ts` for the catalog-seed
 // + heartbeat-deploy shape) without reinventing any of it — only the
 // inference source differs: every catalog provider here rides the
 // `openai-compatible` adapter against an Ollama origin, matching how

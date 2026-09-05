@@ -1,4 +1,10 @@
-export { CORBITS_TOOLS_REGISTRY, CORBITS_TOOL_PACKAGE_DIRS } from "./registry";
+export {
+  CORBITS_TOOLS_REGISTRY,
+  CORBITS_TOOL_PACKAGE_DIRS,
+  REQUIRED_SEED_TOOL_PACKAGES,
+  tarballCoversPackage,
+  tarballsCoverRequiredSeedPackages,
+} from "./registry";
 export {
   describeCorbitsToolPackages,
   type CorbitsToolPackageDescription,
@@ -12,11 +18,14 @@ export {
 export {
   shouldPublishTarball,
   publishCorbitsToolsRegistry,
+  isCorbitsToolsRegistrySeeded,
   sha512Integrity,
   TarballVersionCollisionError,
+  EmptyRegistryPublishError,
   type ApiCall,
   type ApiResult,
   type PublishCorbitsToolsRegistryArgs,
+  type PublishCorbitsToolsRegistryResult,
   type PublishSummary,
 } from "./publish";
 export {

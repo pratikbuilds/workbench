@@ -51,9 +51,17 @@ behind human approval.
 ## Working conventions
 
 - `bun run check` (typecheck, lint, test, structural checks) must pass
-  before every commit. CI's `structural` job runs the same
-  `check:structural` list as local, including `check:report-error` and
-  `check:error-envelope`, so the two cannot drift.
+  before every commit. `check:structural` is a single runner
+  (`scripts/checks/run.ts`) that discovers and runs every
+  `scripts/checks/*.ts` file with an `import.meta.main` entry point;
+  CI's `structural` job runs that same `bun run check:structural`, so
+  local and CI can never enumerate a different set of checks. Run one
+  check on its own with `bun run check:structural <name>` (e.g. `bun run
+check:structural report-error`), forwarding flags after it (e.g.
+  `bun run check:structural report-error -- --write-baseline`). There is
+  no standalone `check:<name>` script anymore — `check:<name>` in prose
+  anywhere in this repo (this file included) means `bun run
+check:structural <name>`.
 - Commit sequence per change: tests first ("Add tests for X"), then
   implementation ("X: what changed"), then docs ("Update docs: X"). One
   logical change per commit; commit messages are written for a public
@@ -119,45 +127,49 @@ behind human approval.
 
 A rule a check enforces has zero violations; a rule stated only in prose
 drifts the moment it's inconvenient — everything above this section is
-prose. Prefer these over remembering the rule; each is backed by a `bun run
-check:*` script, so a violation fails CI rather than waiting for review.
+prose. Prefer these over remembering the rule; each is backed by a
+`scripts/checks/*.ts` file that `check:structural` (`scripts/checks/run.ts`)
+discovers and runs, so a violation fails CI rather than waiting for review.
 
 - Report every caught error through `reportError` from
   `@corbits/error-sink` — never a bare `catch {}`, never a toast alone. It
   attaches operation/tenant/room/agent context and a `refId` a person can
   quote to support, and redacts secrets before anything reaches a log
   sink. Unlike every other rule in this section, this one does not yet
-  hold retroactively: `check:report-error` fails a catch clause that
+  hold retroactively: the report-error check fails a catch clause that
   neither calls `reportError` nor rethrows only when the catch is new or
   the current change's diff touches its line; a pre-existing catch is
   instead recorded in `scripts/checks/report-error-baseline.txt`, a debt
   ledger — not an allowlist — of 280 violations as of this check landing,
-  each one a real bug still to fix. The same script runs in CI via
-  `check:structural`. Regenerate it with `bun run
-scripts/checks/report-error.ts --write-baseline` after fixing (or
+  each one a real bug still to fix. Regenerate it with `bun run
+check:structural report-error -- --write-baseline` after fixing (or
   newly opting out) entries; a stale entry with no matching violation
   fails the check, so the ledger can only shrink. A violation already
   tracked on its own ticket opts out instead with a `report-error-ignore:
 <reason>` comment on the catch or in its body — that's for a violation
   actively being fixed, never a way to clear a baseline entry quietly.
-- A package's `browser-safe` subpath (e.g. `@corbits/routines/client`) may
+- A package's `browser-safe` subpath (e.g. `@corbits/inbox/client`) may
   never import a server-only dependency (`postgres`, `drizzle-orm`,
-  `hono`, any `@intx/*`) — `check:browser-safe-subpaths` walks the real
+  `hono`, any `@intx/*`) — the browser-safe-subpaths check walks the real
   import graph from each declared entry point.
 - A `{ name, version }` tool-package pin literal must match the pinned
-  package's own `package.json` version — `check:tool-package-pins` catches
-  the mismatch. A tool package's `src/` changing without a version bump is
-  the other half of that class, caught separately by
-  `check:tool-package-freshness`: it diffs against the base ref (a
-  GitHub `pull_request` job reads `pull_request.base.sha` from
+  package's own `package.json` version — the tool-package-pins check
+  catches the mismatch. A tool package's `src/` changing without a version
+  bump is the other half of that class, caught separately by
+  tool-package-freshness: it diffs against the base ref (a GitHub
+  `pull_request` job reads `pull_request.base.sha` from
   `GITHUB_EVENT_PATH`; locally it falls back to the merge base with
   `origin/main`) and flags any tool package whose `src/` differs from that
   base while its version stayed the same. With no base ref available
   (no `origin/main`, no pull-request event) it no-ops, deferring to CI as the
   authoritative run.
 - Every package needs a `LICENSE` file (canonical LGPL-2.1-or-later text,
-  copy from any existing `packages/*/LICENSE`) — `check:licenses` fails
+  copy from any existing `packages/*/LICENSE`) — the licenses check fails
   without one.
+- A dependency declared once in the root `catalog` (bun's workspace
+  catalog) must be consumed as `catalog:` everywhere — the catalog-pins
+  check fails a literal range for a catalogued dependency, which is how
+  the same package silently ends up pinned two ways.
 - `tsconfig.base.json` sets `exactOptionalPropertyTypes: true`: an absent
   key and an explicit `{ foo: undefined }` are different types. Assigning
   `undefined` to an optional field the compiler expects omitted is a

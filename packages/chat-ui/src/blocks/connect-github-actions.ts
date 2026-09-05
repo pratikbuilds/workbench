@@ -35,15 +35,24 @@ export type ConnectGithubActions = {
    * `getConnectState`. A credential completed elsewhere (the Plugins
    * page, another tab) settles this connector's entry on
    * `@workbench/templates`'s `template/pendingConnections`
-   * (CL-6463's `settleConnectedService`) so the *next* fresh
-   * `getConnectState` — e.g. on this card's next mount — already reads
-   * connected, since that read resolves against the real credential,
-   * never this setting. Returns an unsubscribe.
+   * (CL-6463's `settleConnectedService`) and publishes `chat.settings`;
+   * ChatWorkspace parses that event and calls `notifySettingsChanged`
+   * so a card already mounted flips without remounting (CL-6476).
+   * Returns an unsubscribe.
    */
   readonly subscribeConnectState: (
     messageId: string,
     onUpdate: (state: ConnectGithubQuery) => void,
   ) => () => void;
+  /**
+   * Re-reads live connect state and fans it to every
+   * `subscribeConnectState` listener. ChatWorkspace calls this when a
+   * parsed `chat.settings` event lands — `settleConnectedService`
+   * already publishes that event when a credential completes out of
+   * band, and a card already mounted must flip without remounting
+   * (CL-6476).
+   */
+  readonly notifySettingsChanged: () => Promise<void>;
   /**
    * Both the card's "Connect GitHub" and "Use an access token instead"
    * actions funnel here — this repo's connect cards are PAT-first

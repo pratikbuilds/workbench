@@ -5,8 +5,6 @@ import {
   agentHasTools,
   connectionIsLive,
   fakeReceived,
-  routineDeliversTo,
-  routineHasTrigger,
 } from "./world-scorers.ts";
 
 function worldCtx(world: Partial<WorldSnapshot>): ScorerContext {
@@ -16,7 +14,6 @@ function worldCtx(world: Partial<WorldSnapshot>): ScorerContext {
     world: {
       capturedAt: "2026-01-01T00:00:00.000Z",
       agentDefinitions: [],
-      routines: [],
       connections: [],
       webhookTriggers: [],
       fakeReceipts: [],
@@ -71,66 +68,6 @@ describe("agentHasTools", () => {
   test("fails when the agent doesn't exist yet", () => {
     const r = agentHasTools("Nobody", ["x"])(worldCtx({}));
     expect(r.pass).toBe(false);
-  });
-});
-
-describe("routineHasTrigger", () => {
-  test("passes when the named routine's trigger.kind matches", () => {
-    const ctx = worldCtx({
-      routines: [
-        {
-          id: "r-1",
-          name: "Daily digest",
-          definitionAssetId: "def-1",
-          trigger: { kind: "daily", time: "09:00" },
-          deliveryWorkbenchId: "wb-1",
-          enabled: true,
-        },
-      ],
-    });
-    const r = routineHasTrigger("Daily digest", "daily")(ctx);
-    expect(r.pass).toBe(true);
-  });
-
-  test("fails when trigger.kind doesn't match", () => {
-    const ctx = worldCtx({
-      routines: [
-        {
-          id: "r-1",
-          name: "Daily digest",
-          definitionAssetId: "def-1",
-          trigger: { kind: "weekly" },
-          deliveryWorkbenchId: null,
-          enabled: true,
-        },
-      ],
-    });
-    const r = routineHasTrigger("Daily digest", "daily")(ctx);
-    expect(r.pass).toBe(false);
-  });
-
-  test("fails when the routine doesn't exist yet", () => {
-    const r = routineHasTrigger("Nothing yet", "daily")(worldCtx({}));
-    expect(r.pass).toBe(false);
-  });
-});
-
-describe("routineDeliversTo", () => {
-  test("passes when deliveryWorkbenchId matches", () => {
-    const ctx = worldCtx({
-      routines: [
-        {
-          id: "r-1",
-          name: "Daily digest",
-          definitionAssetId: "def-1",
-          trigger: null,
-          deliveryWorkbenchId: "wb-1",
-          enabled: true,
-        },
-      ],
-    });
-    expect(routineDeliversTo("Daily digest", "wb-1")(ctx).pass).toBe(true);
-    expect(routineDeliversTo("Daily digest", "wb-2")(ctx).pass).toBe(false);
   });
 });
 

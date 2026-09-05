@@ -148,14 +148,13 @@ and the rest of its semantic palette. Never hardcode a hex value or an
 arbitrary Tailwind color class in product code; if a needed token doesn't
 exist yet, add it in react-ui, not locally.
 
-**Generated identity color** is the one deliberate exception: a person's
-fallback avatar (no explicit picture) needs a color per principal, not a
-handful of shared tokens, so it's the same `colorForPrincipal` hash
-already shipped for presence cursors (`@corbits/presence/color`), paired
-with a computed black/white initials color for contrast
-(`@corbits/chat-ui`'s `generatedAvatarStyle`). Agents keep react-ui's
-`Avatar` tone system (solid `--primary`/`--accent`/`--success`) so the two
-identity kinds stay visually distinct at a glance.
+**Avatar identity** is the one deliberate color exception. A person without
+an explicit image receives deterministic initials from the approved pastel
+palette. `@corbits/chat-ui` owns the finite Tailwind background/text class
+map and resolves a principal to one class pair; consumers never use CSS
+variables or inline color styles. Agents use `CorbitAvatar`: a circular
+field with a dark lower visor and sensor glint. The two forms stay distinct
+at a glance in every collaborative surface.
 
 **Type.** Red Hat Display for sans (UI text, headings), Space Mono for
 monospace (code, IDs, numeric/tabular contexts). Both are declared once in

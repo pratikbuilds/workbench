@@ -403,7 +403,8 @@ describe("shared workbench projection", () => {
           .read()
           .then((result) =>
             result.done ? undefined : decoder.decode(result.value),
-          ),
+          )
+          .catch(() => undefined),
         new Promise<undefined>((resolve) =>
           setTimeout(() => resolve(undefined), timeoutMs),
         ),

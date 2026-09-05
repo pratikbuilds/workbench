@@ -17,6 +17,14 @@ describe("ApiQueryError", () => {
     const withoutStatus = new ApiQueryError("network down");
     expect(withoutStatus.status).toBeUndefined();
   });
+
+  test("carries an optional refId from a hub error envelope", () => {
+    const withRef = new ApiQueryError("boom", 500, "/api/x", "ref_sink_1");
+    expect(withRef.refId).toBe("ref_sink_1");
+
+    const withoutRef = new ApiQueryError("boom", 500, "/api/x");
+    expect(withoutRef.refId).toBeUndefined();
+  });
 });
 
 describe("UnauthenticatedError", () => {

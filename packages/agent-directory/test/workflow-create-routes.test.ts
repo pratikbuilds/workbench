@@ -21,6 +21,7 @@ import type {
 import type { PinnedSkillIndexResolver } from "../src/routes";
 import { createInMemoryDefinitionSkillsStore } from "../src/skills-store";
 import type { CapabilityInventoryProvider } from "../src/capability-inventory";
+import { CORBITS_TOOLS_REGISTRY } from "@corbits/tool-registry-publish";
 import { definitionFrom, SOURCE_TREE_PATHS } from "./source-tree";
 
 const TENANT_ID = "tnt_1";
@@ -52,9 +53,9 @@ function fakeAssetService(overrides: Partial<AssetService> = {}): AssetService {
     readAssetBlob: () => {
       throw new Error("not used in these tests");
     },
-    listAssetBlobs: () => {
-      throw new Error("not used in these tests");
-    },
+    // `resolvePinnedVersion`'s tarball listing — every create test in
+    // this file pins (or gets baseline-pinned) `@corbits/memory-tools`.
+    listAssetBlobs: () => Promise.resolve(["corbits-memory-tools-1.4.0.tgz"]),
     ...overrides,
   } as unknown as AssetService;
 }
@@ -104,10 +105,19 @@ function fakeDb(
   return {
     query: {
       tenant: {
-        findFirst: async () => ({ id: TENANT_ID, domain: "acme.example" }),
+        findFirst: async () => ({
+          id: TENANT_ID,
+          domain: "acme.example",
+          parentId: null,
+        }),
       },
       asset: {
-        findFirst: async () => undefined,
+        findFirst: async () => ({
+          id: "ast_corbits_tools",
+          tenantId: TENANT_ID,
+          kind: "package-registry" as const,
+          name: CORBITS_TOOLS_REGISTRY,
+        }),
       },
       workflowDefinition: {
         findFirst: async () => createdRow,

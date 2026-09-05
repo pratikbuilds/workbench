@@ -1,6 +1,5 @@
 // DB-gated: skipped when no DATABASE_URL is reachable (a fresh checkout
-// still runs the unit gates), mirroring `@corbits/routines`' own
-// `store.drizzle.test.ts` and this package's `migrations.test.ts`. Runs
+// still runs the unit gates), mirroring this package's `migrations.test.ts`. Runs
 // against its own scratch database, never the developer's or the
 // walking-skeleton suite's.
 //

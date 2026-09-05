@@ -1339,11 +1339,106 @@ describe("GET /workbenches/:id/agents", () => {
     const response = await app.request(`/workbenches/${workbench.id}/agents`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
-      items: { address: string; handle: string; definitionId: string }[];
+      items: {
+        address: string;
+        handle: string;
+        definitionId: string;
+        displayName: string;
+      }[];
     };
     expect(body.items).toHaveLength(1);
     expect(body.items[0]?.address).toBe("ins_invited1@acme.example");
     expect(body.items[0]?.definitionId).toBe("wfd_echo");
+    expect(body.items[0]?.displayName).toBe("Echo");
+  });
+
+  test("prefers the definition's display name over its slug (CL-6424)", async () => {
+    const deps = buildDeps({
+      platform: fakePlatform({
+        invitable: [
+          { id: "wfd_review", name: "code-review", description: "Reviewer" },
+        ],
+        resolveDefinitionIdByAddress: async (address) =>
+          address === "ins_invited1@acme.example" ? "wfd_review" : undefined,
+        resolveDefinitionAssetId: async (definitionId) => `ast_${definitionId}`,
+      }),
+    });
+    const app = mountAs(createChatRoutes(deps), "prn_alice");
+    const { body: workbench } = await createWorkbench(app, {
+      kind: "workbench",
+      name: "Test Workbench",
+    });
+    await app.request(`/workbenches/${workbench.id}/invite`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ definitionId: "wfd_review" }),
+    });
+
+    const response = await app.request(`/workbenches/${workbench.id}/agents`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      items: { address: string; displayName: string }[];
+    };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]?.displayName).toBe("Reviewer");
+  });
+
+  test("falls back to a live name lookup when the invitable snapshot predates the definition (CL-6424)", async () => {
+    const deps = buildDeps({
+      platform: fakePlatform({
+        invitable: [],
+        resolveDefinitionNameSource: async (definitionId) =>
+          definitionId === "wfd_echo"
+            ? { name: "echo", description: "Myra" }
+            : undefined,
+        resolveDefinitionIdByAddress: async (address) =>
+          address === "ins_invited1@acme.example" ? "wfd_echo" : undefined,
+        resolveDefinitionAssetId: async (definitionId) => `ast_${definitionId}`,
+      }),
+    });
+    const app = mountAs(createChatRoutes(deps), "prn_alice");
+    const { body: workbench } = await createWorkbench(app, {
+      kind: "workbench",
+      name: "Test Workbench",
+    });
+    await app.request(`/workbenches/${workbench.id}/invite`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ definitionId: "wfd_echo" }),
+    });
+
+    const response = await app.request(`/workbenches/${workbench.id}/agents`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      items: { address: string; displayName: string }[];
+    };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]?.displayName).toBe("Myra");
+  });
+
+  test("omits a participant whose definition has no name source left (CL-6424)", async () => {
+    const deps = buildDeps({
+      platform: fakePlatform({
+        invitable: [],
+        resolveDefinitionIdByAddress: async (address) =>
+          address === "ins_invited1@acme.example" ? "wfd_ghost" : undefined,
+        resolveDefinitionAssetId: async (definitionId) => `ast_${definitionId}`,
+      }),
+    });
+    const app = mountAs(createChatRoutes(deps), "prn_alice");
+    const { body: workbench } = await createWorkbench(app, {
+      kind: "workbench",
+      name: "Test Workbench",
+    });
+    await app.request(`/workbenches/${workbench.id}/invite`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ definitionId: "wfd_ghost" }),
+    });
+
+    const response = await app.request(`/workbenches/${workbench.id}/agents`);
+    const body = (await response.json()) as { items: unknown[] };
+    expect(body.items).toEqual([]);
   });
 
   test("lists every invited agent when a workbench has more than one", async () => {

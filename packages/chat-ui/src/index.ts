@@ -1,5 +1,10 @@
 export { ChatWorkspace } from "./chat-workspace";
-export type { TenantResolution, PresenceMember } from "./chat-workspace";
+export type {
+  TenantResolution,
+  PresenceMember,
+  ChatHeaderChrome,
+  ChatHeaderCrumb,
+} from "./chat-workspace";
 
 export { WorkbenchTimeline, messageDomId, findRetryText } from "./timeline";
 export { NoUsableModelBanner } from "./no-usable-model-banner";
@@ -15,11 +20,22 @@ export type {
 export { WorkbenchLoadingState } from "./loading-state";
 
 export {
-  AVATAR_IDENTITY_CLASS,
-  generatedAvatarStyle,
+  CorbitAvatar,
+  CORBIT_DEFAULT_COLOR,
+  CORBIT_VISOR_COLOR,
+  CORBIT_GLINT_COLOR,
+  AVATAR_COLORS,
+  avatarColorClass,
+  avatarColorForPrincipal,
+  avatarClassForPrincipal,
   resolveAvatarFill,
-} from "./avatar-identity";
-export type { AvatarFill, GeneratedAvatarStyle } from "./avatar-identity";
+} from "./avatar";
+export type {
+  AvatarFill,
+  AvatarColor,
+  CorbitAvatarProps,
+  CorbitAvatarSize,
+} from "./avatar";
 
 export { PinnedStrip } from "./pinned-strip";
 export type { PinsStatus } from "./use-workbench-feed";
@@ -65,6 +81,11 @@ export {
   mentionOptionsFromWorkbench,
   resolveBringInLists,
 } from "./mentions";
+export {
+  agentDisplayNamesFromAgents,
+  displayNameForAddress,
+} from "./agent-display-names";
+export type { AgentDisplayNames } from "./agent-display-names";
 export type {
   BringInAgentDefinition,
   BringInListFailure,
