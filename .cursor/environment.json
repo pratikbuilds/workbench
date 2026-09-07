@@ -1,0 +1,16 @@
+{
+  "name": "Corbits Workbench",
+  "user": "ubuntu",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "export PATH=\"$HOME/.bun/bin:$PATH\" && bun run dev"
+    }
+  ],
+  "ports": [{ "name": "web", "port": 3000 }]
+}
